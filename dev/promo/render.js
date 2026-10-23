@@ -96,6 +96,7 @@ async function main() {
     '-c:v', 'libx264', '-preset', 'slow', '-crf', '18', '-tune', 'animation',
     '-pix_fmt', 'yuv420p', '-r', String(FPS), '-movflags', '+faststart', mp4,
   ]);
+  require('./sound').addSound([mp4]); // music + sound effects (dev/promo/sound.js)
 
   if (!vertical) {
     // Poster: the reconnected terminal, headline visible.
