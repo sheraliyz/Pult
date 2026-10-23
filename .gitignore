@@ -1,0 +1,29 @@
+# Dependencies and local toolchains
+node_modules/
+.tools/
+
+# Build output (installers and the APK go to GitHub Releases, not the repo)
+dist/
+release/
+*.blockmap
+
+# Android signing key: NEVER commit (updates must be signed with it)
+key.properties
+*.jks
+*.keystore
+
+# Gradle / Kotlin caches
+.gradle/
+.kotlin/
+
+# Editors / OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+*.log
+
+# Dev harness output (mobile/test/shots are golden files: keep them)
+/shots/
+/ui-shots/

@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<title>Pult — promo</title>
+<!--
+  Pult promo video. Every frame is a pure function of time: window.seek(t)
+  sets all styles, nothing animates by itself. Render with dev/promo/render.js.
+  ?v=1 switches to the vertical 1080x1920 layout.
+-->
+<link rel="stylesheet" href="../../node_modules/@fontsource-variable/inter/wght.css">
+<link rel="stylesheet" href="../../node_modules/@fontsource/jetbrains-mono/400.css">
+<link rel="stylesheet" href="../../node_modules/@fontsource/jetbrains-mono/600.css">
+<style>
+  :root {
+    --bg: #0b0b0c;
+    --bg-2: #141416;
+    --bg-3: #131315;
+    --line: rgba(255, 255, 255, 0.07);
+    --line-2: rgba(255, 255, 255, 0.12);
+    --fg: #ececee;
+    --fg-2: #a1a1a8;
+    --fg-3: #6a6a72;
+    --ok: #3ecf8e;
+    --warn: #f5b041;
+    --err: #f25c5f;
+    --blue: #7aa7ff;
+    --font: 'Inter Variable', sans-serif;
+    --mono: 'JetBrains Mono', monospace;
+    --W: 1920px;
+    --H: 1080px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  /* 4 extra px below the frame hold a colour-coded frame id (cropped by the renderer). */
+  html, body { width: var(--W); height: calc(var(--H) + 4px); overflow: hidden; background: var(--bg); }
+  #marker { position: absolute; left: 0; top: var(--H); width: 16px; height: 4px; background: #000; }
+  body {
+    font-family: var(--font);
+    color: var(--fg);
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+  body.v { --W: 1080px; --H: 1920px; }
+
+  #frame {
+    position: relative;
+    width: var(--W);
+    height: var(--H);
+    overflow: hidden;
+    background: radial-gradient(ellipse 70% 60% at 50% 45%, #121214 0%, var(--bg) 70%);
+  }
+  .scene {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    will-change: opacity, transform;
+  }
+  .mono { font-family: var(--mono); }
+  .h1 { font-size: 72px; font-weight: 640; letter-spacing: -0.035em; line-height: 1.08; text-align: center; }
+  .h2 { font-size: 36px; font-weight: 430; color: var(--fg-2); letter-spacing: -0.015em; text-align: center; line-height: 1.3; }
+  .kicker { font-family: var(--mono); font-size: 20px; color: var(--fg-3); letter-spacing: 0.08em; text-transform: uppercase; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--ok); }
+
+  /* ---------- intro / outro ---------- */
+  .logo { width: 200px; height: 200px; filter: drop-shadow(0 24px 60px rgba(0, 0, 0, 0.6)); }
+  .brand { font-size: 150px; font-weight: 680; letter-spacing: -0.055em; line-height: 1; margin-top: 40px; }
+  .tagline { margin-top: 30px; }
+  #s-outro .logo { width: 150px; height: 150px; }
+  #s-outro .outro-line { margin-top: 50px; }
+  #s-outro .tagline { margin-top: 22px; }
+  .platforms { margin-top: 30px; font-family: var(--mono); font-size: 26px; color: var(--fg-3); letter-spacing: 0.04em; }
+
+  /* ---------- terminal window (problem / solution) ---------- */
+  #s-term { justify-content: flex-start; padding-top: 92px; }
+  .heads { position: relative; width: 100%; height: 170px; }
+  .heads > div { position: absolute; left: 0; right: 0; top: 0; display: flex; flex-direction: column; align-items: center; gap: 18px; }
+  .win {
+    position: relative;
+    width: 1240px;
+    height: 640px;
+    margin-top: 40px;
+    border: 1px solid var(--line-2);
+    border-radius: 16px;
+    background: var(--bg);
+    box-shadow: 0 40px 120px rgba(0, 0, 0, 0.65), 0 2px 12px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+  }
+  .win-top { position: absolute; left: 0; right: 0; top: 0; height: 52px; border-bottom: 1px solid var(--line); }
+  .win-top > div { position: absolute; inset: 0; display: flex; align-items: center; padding: 0 18px; gap: 14px; }
+  .plain-title { justify-content: center; font-family: var(--mono); font-size: 16px; color: var(--fg-3); }
+  .tab { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 14px; border-radius: 8px; background: rgba(255, 255, 255, 0.075); font-size: 16px; font-weight: 560; }
+  .tab .dot { width: 8px; height: 8px; }
+  .mini-logo { width: 26px; height: 26px; }
+  .term {
+    position: absolute;
+    left: 0; right: 0; top: 52px; bottom: 44px;
+    padding: 26px 30px;
+    font-family: var(--mono);
+    font-size: 22px;
+    line-height: 1.6;
+    white-space: pre;
+    color: var(--fg);
+  }
+  .term .p { color: var(--ok); font-weight: 600; }
+  .term .b { color: var(--blue); }
+  .term .m { color: var(--fg-3); }
+  .term .g { color: var(--ok); }
+  .term .r { color: var(--err); }
+  .pbar { display: inline-block; position: relative; width: 24ch; height: 14px; vertical-align: 1px; border-radius: 3px; background: #222226; overflow: hidden; }
+  .pbar > span { position: absolute; left: 0; top: 0; bottom: 0; background: var(--fg); border-radius: 3px; }
+  .cursor { display: inline-block; width: 12px; height: 26px; background: var(--fg); vertical-align: -5px; }
+  .status {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 44px;
+    display: flex; align-items: center; gap: 22px; padding: 0 18px;
+    border-top: 1px solid var(--line);
+    font-size: 15px; color: var(--fg-2);
+  }
+  .status .st { display: flex; align-items: center; gap: 9px; color: var(--fg); }
+  .status .st .dot { width: 8px; height: 8px; }
+  .badge { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 6px; background: rgba(255, 255, 255, 0.06); font-size: 14px; color: var(--fg-2); }
+  .status .right { margin-left: auto; display: flex; gap: 22px; color: var(--fg-3); }
+  .status .right b { color: var(--fg-2); font-weight: 500; }
+  .banner {
+    position: absolute; top: 70px; left: 50%;
+    display: flex; align-items: center; gap: 12px;
+    height: 44px; padding: 0 20px;
+    border: 1px solid var(--line-2); border-radius: 999px;
+    background: var(--bg-2);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55), 0 2px 10px rgba(0, 0, 0, 0.4);
+    font-size: 18px; white-space: nowrap;
+  }
+  .spinner { width: 20px; height: 20px; }
+
+  /* ---------- features ---------- */
+  #s-feat { flex-direction: row; gap: 70px; padding: 0 110px; }
+  .feat-text { width: 560px; flex: none; }
+  .feat-text .h1 { text-align: left; font-size: 64px; }
+  .feat-list { margin-top: 54px; display: flex; flex-direction: column; gap: 30px; }
+  .feat { display: flex; align-items: baseline; gap: 20px; font-size: 34px; font-weight: 520; letter-spacing: -0.02em; line-height: 1.25; }
+  .feat .n { font-family: var(--mono); font-size: 18px; color: var(--fg-3); width: 30px; flex: none; }
+  .shot {
+    position: relative;
+    width: 1120px; height: 700px; flex: none;
+    border: 1px solid var(--line-2);
+    border-radius: 14px;
+    overflow: hidden;
+    background: var(--bg);
+    box-shadow: 0 40px 120px rgba(0, 0, 0, 0.7), 0 2px 12px rgba(0, 0, 0, 0.5);
+  }
+  .shot img { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; }
+
+  /* ---------- phones ---------- */
+  #s-phone { justify-content: flex-start; padding-top: 70px; }
+  .phones { display: flex; gap: 70px; margin-top: 46px; }
+  .phone {
+    width: 362px; height: 760px;
+    padding: 11px;
+    border-radius: 58px;
+    background: #1b1b1e;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.10), 0 0 0 1px #000, 0 40px 100px rgba(0, 0, 0, 0.7);
+    position: relative;
+  }
+  .phone .screen { width: 100%; height: 100%; border-radius: 47px; overflow: hidden; background: #0b0b0b; position: relative; }
+  .phone img { width: 100%; height: 100%; display: block; object-fit: cover; }
+  .phone .cam { position: absolute; top: 22px; left: 50%; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; background: #050506; box-shadow: inset 0 0 0 2px #19191c; }
+  .phone-label { margin-top: 26px; text-align: center; font-size: 22px; color: var(--fg-3); }
+
+  /* ---------- trust ---------- */
+  .trust { display: flex; flex-direction: column; gap: 46px; margin-top: 60px; }
+  .trow { display: flex; align-items: center; gap: 28px; font-size: 50px; font-weight: 560; letter-spacing: -0.03em; }
+  .ticon { width: 76px; height: 76px; border-radius: 20px; border: 1px solid var(--line-2); background: var(--bg-2); display: flex; align-items: center; justify-content: center; flex: none; }
+  .ticon svg { width: 36px; height: 36px; stroke: var(--fg); fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* ---------- vertical layout ---------- */
+  body.v .h1 { font-size: 66px; }
+  body.v .h2 { font-size: 34px; padding: 0 60px; }
+  body.v .brand { font-size: 140px; }
+  body.v #s-term { padding-top: 330px; }
+  body.v .heads { height: 230px; }
+  body.v .win { width: 980px; height: 780px; margin-top: 60px; }
+  body.v .term { font-size: 21px; padding: 26px 24px; }
+  body.v .status .right { display: none; }
+  body.v #s-feat { flex-direction: column; gap: 70px; padding: 0 50px; }
+  body.v .feat-text { width: 980px; display: flex; flex-direction: column; align-items: center; }
+  body.v .feat-text .h1 { text-align: center; }
+  body.v .feat-list { margin-top: 50px; gap: 22px; }
+  body.v .feat { font-size: 34px; }
+  body.v .shot { width: 980px; height: 760px; }
+  body.v .shot img { object-fit: cover; object-position: 35% 0; }
+  body.v #s-phone { justify-content: center; padding-top: 0; }
+  body.v .phones { gap: 0; margin-top: 100px; align-items: center; }
+  body.v .phones > div { position: relative; z-index: 2; }
+  body.v .phones > div:nth-child(1) { margin-right: -90px; z-index: 1; }
+  body.v .phones > div:nth-child(3) { margin-left: -90px; z-index: 1; }
+  body.v .phones > div:nth-child(2n+1) .phone { transform: scale(0.8); opacity: 0.85; }
+  body.v .phone { width: 400px; height: 840px; border-radius: 62px; padding: 12px; }
+  body.v .phone .screen { border-radius: 51px; }
+  body.v .phone-label { display: none; }
+  body.v .trow { font-size: 44px; }
+  body.v .outro-line { font-size: 58px; }
+</style>
+</head>
+<body>
+<div id="frame">
+
+  <!-- 1. Intro -->
+  <section class="scene" id="s-intro">
+    <svg class="logo" id="logo1" viewBox="0 0 512 512"></svg>
+    <div class="brand" id="brand1">Pult</div>
+    <div class="h2 tagline" id="tag1">Serveringiz — bir joyda. Uzilishlarsiz.</div>
+  </section>
+
+  <!-- 2+3. Problem → solution, one terminal window -->
+  <section class="scene" id="s-term">
+    <div class="heads">
+      <div id="headA">
+        <div class="kicker">Tanish holat</div>
+        <div class="h1">Internet uzildi — ish ham yo‘qoldimi?</div>
+      </div>
+      <div id="headB">
+        <div class="h1">Sessiya saqlanadi <span style="color:var(--fg-3)">(tmux)</span>.</div>
+        <div class="h2">Qayta ulanganda — aynan qolgan joyidan.</div>
+      </div>
+      <div id="headC">
+        <div class="kicker">Pult bilan</div>
+        <div class="h1">Pult o‘zi qayta ulanadi.</div>
+      </div>
+    </div>
+    <div class="win" id="win">
+      <div class="win-top">
+        <div class="plain-title" id="plainTop">ssh demo@acme-prod</div>
+        <div id="pultTop">
+          <svg class="mini-logo" viewBox="0 0 512 512" id="logoMini"></svg>
+          <div class="tab"><span class="dot" id="tabDot"></span>acme-prod</div>
+        </div>
+      </div>
+      <div class="term" id="term"></div>
+      <div class="status" id="status">
+        <div class="st"><span class="dot" id="stDot"></span><span id="stText">Ulangan</span></div>
+        <span class="mono" style="color:var(--fg-3)">demo@acme-prod</span>
+        <span class="badge"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>saqlanadi</span>
+        <div class="right"><span>Ping <b id="ping">32 ms</b></span><span>CPU <b id="cpu">18%</b></span><span>RAM <b>1.5 GB / 3.8 GB</b></span></div>
+      </div>
+      <div class="banner" id="banner">
+        <svg class="spinner" id="spin" viewBox="0 0 24 24" fill="none" stroke="#f5b041" stroke-width="2.4" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.2-8.56"/></svg>
+        Aloqa uzildi · qayta ulanmoqda…
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. Desktop features -->
+  <section class="scene" id="s-feat">
+    <div class="feat-text">
+      <div class="kicker" id="featK">Windows</div>
+      <div class="h1" id="featH" style="margin-top:18px">Hammasi bitta oynada.</div>
+      <div class="feat-list">
+        <div class="feat" data-i="0"><span class="n">01</span><span>Terminal</span></div>
+        <div class="feat" data-i="1"><span class="n">02</span><span>Fayllar (SFTP)</span></div>
+        <div class="feat" data-i="2"><span class="n">03</span><span>Muharrir</span></div>
+        <div class="feat" data-i="3"><span class="n">04</span><span>Yuklash uzilsa ham davom etadi</span></div>
+      </div>
+    </div>
+    <div class="shot" id="shot">
+      <img src="shots/split.png" data-i="0">
+      <img src="shots/editor.png" data-i="2">
+      <img src="shots/reconnecting.png" data-i="3">
+      <img src="shots/transfer-done.png" data-i="4">
+    </div>
+  </section>
+
+  <!-- 5. Phone -->
+  <section class="scene" id="s-phone">
+    <div class="kicker" id="phK">Android</div>
+    <div class="h1" id="phH" style="margin-top:18px">Telefonda ham. O‘sha sessiya.</div>
+    <div class="phones">
+      <div><div class="phone"><div class="screen"><img src="../../mobile/test/shots/home.png"></div><div class="cam"></div></div><div class="phone-label">Serverlar</div></div>
+      <div><div class="phone"><div class="screen"><img src="../../mobile/test/shots/terminal-keys.png"></div><div class="cam"></div></div><div class="phone-label">Terminal + qo‘shimcha tugmalar</div></div>
+      <div><div class="phone"><div class="screen"><img src="../../mobile/test/shots/files.png"></div><div class="cam"></div></div><div class="phone-label">Fayllar</div></div>
+    </div>
+  </section>
+
+  <!-- 6. Trust -->
+  <section class="scene" id="s-trust">
+    <div class="kicker" id="trK">Xavfsiz va ochiq</div>
+    <div class="trust">
+      <div class="trow"><div class="ticon"><svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></svg></div>Parollar shifrlangan</div>
+      <div class="trow"><div class="ticon"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg></div>Server kaliti tekshiriladi</div>
+      <div class="trow"><div class="ticon"><svg viewBox="0 0 24 24"><path d="M8 7l-5 5 5 5"/><path d="M16 7l5 5-5 5"/><path d="M13.5 4l-3 16"/></svg></div><span>Ochiq kod <span style="color:var(--fg-3);font-weight:450">(MIT)</span></span></div>
+    </div>
+  </section>
+
+  <!-- 7. Outro -->
+  <section class="scene" id="s-outro">
+    <svg class="logo" id="logo2" viewBox="0 0 512 512"></svg>
+    <div class="h1 outro-line" id="brand2">Pult — bepul va ochiq kodli</div>
+    <div class="h2 tagline" id="tag2">Serveringiz — bir joyda. Uzilishlarsiz.</div>
+    <div class="platforms" id="plat2">Windows · Android</div>
+  </section>
+</div>
+<div id="marker"></div>
+
+<script>
+'use strict';
+const VERTICAL = new URLSearchParams(location.search).get('v') === '1';
+if (VERTICAL) document.body.classList.add('v');
+
+const DURATION = 47;
+window.DURATION = DURATION;
+
+// ---------------------------------------------------------------- helpers
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => [...document.querySelectorAll(s)];
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const prog = (t, a, b) => clamp((t - a) / (b - a));
+const easeOut = (x) => 1 - Math.pow(1 - x, 3);
+const easeInOut = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+const lerp = (a, b, k) => a + (b - a) * k;
+
+// Fade + rise in at `a`, optional fade out at `b`.
+function rise(el, t, a, { dur = 0.8, dist = 28, out = null, outDur = 0.5, scale = 0 } = {}) {
+  const k = easeOut(prog(t, a, a + dur));
+  const o = out == null ? 1 : 1 - easeInOut(prog(t, out, out + outDur));
+  el.style.opacity = k * o;
+  el.style.transform = `translateY(${(1 - k) * dist - (1 - o) * 12}px) scale(${1 - (1 - k) * scale})`;
+}
+// Whole-scene envelope: soft fade with a slight zoom.
+function scene(el, t, a, b, fin = 0.6, fout = 0.6) {
+  const i = easeInOut(prog(t, a, a + fin));
+  const o = 1 - easeInOut(prog(t, b - fout, b));
+  const v = t < a || t > b ? 0 : i * o;
+  el.style.opacity = v;
+  el.style.visibility = v > 0 ? 'visible' : 'hidden';
+  el.style.transform = `scale(${1.015 - 0.015 * i + 0.01 * (1 - o)})`;
+  return v > 0;
+}
+
+// ---------------------------------------------------------------- logo
+const LOGO = `
+  <defs><linearGradient id="LG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#26262a"/><stop offset="1" stop-color="#0e0e10"/></linearGradient></defs>
+  <rect class="lg-bg" x="24" y="24" width="464" height="464" rx="112" fill="url(#LG)" stroke="rgba(255,255,255,0.10)" stroke-width="3"/>
+  <path class="lg-chev" d="M162 190 L244 256 L162 322" fill="none" stroke="#f2f2f3" stroke-width="44" stroke-linecap="round" stroke-linejoin="round" pathLength="1" stroke-dasharray="1 1"/>
+  <path class="lg-us" d="M282 322 L346 322" stroke="#f2f2f3" stroke-width="44" stroke-linecap="round"/>
+  <circle class="lg-dot" cx="354" cy="170" r="20" fill="#3ecf8e"/>
+  <circle class="lg-halo" cx="354" cy="170" r="20" fill="none" stroke="#3ecf8e" stroke-width="4"/>`;
+for (const id of ['logo1', 'logo2', 'logoMini']) $('#' + id).innerHTML = LOGO;
+
+function logo(svg, t, a) {
+  // a = start time; chevron draws, underscore blinks in, dot pops with a ring.
+  const bg = easeOut(prog(t, a, a + 0.7));
+  svg.style.opacity = bg;
+  svg.style.transform = `scale(${0.86 + 0.14 * bg})`;
+  const chev = easeInOut(prog(t, a + 0.3, a + 1.0));
+  svg.querySelector('.lg-chev').style.strokeDashoffset = 1 - chev;
+  const us = prog(t, a + 0.95, a + 1.15);
+  svg.querySelector('.lg-us').style.opacity = us;
+  const d = easeOut(prog(t, a + 1.2, a + 1.6));
+  const dot = svg.querySelector('.lg-dot');
+  dot.style.transformOrigin = '354px 170px';
+  dot.style.transform = `scale(${d})`;
+  const h = prog(t, a + 1.35, a + 2.4);
+  const halo = svg.querySelector('.lg-halo');
+  halo.setAttribute('r', 20 + 34 * easeOut(h));
+  halo.style.opacity = h > 0 && h < 1 ? 0.8 * (1 - h) : 0;
+}
+
+// ---------------------------------------------------------------- terminal
+function bar(p) {
+  // Drawn with CSS: the bundled mono subset has no block glyphs.
+  return `<span class="pbar"><span style="width:${(p * 100).toFixed(2)}%"></span></span>`;
+}
+const pct = (p) => String(Math.round(p * 100)).padStart(3, ' ') + '%';
+const rows = (p) => String(Math.round(p * 2510)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ').padStart(5, ' ');
+const PROMPT = '<span class="p">demo@acme-prod</span>:<span class="b">~</span>$ ';
+
+function termHTML(st) {
+  const L = [];
+  L.push('<span class="m">Last login: Fri Oct 23 09:12:41 2026 from 84.54.70.12</span>');
+  L.push(PROMPT + './deploy.sh');
+  L.push('<span class="m">[1/4]</span> git pull --ff-only ............ <span class="g">ok</span>');
+  L.push('<span class="m">[2/4]</span> docker compose build api ...... <span class="g">ok</span>');
+  L.push('<span class="m">[3/4]</span> migratsiya: 2 510 ta yozuv');
+  L.push(`      ${bar(st.p)} ${pct(st.p)}  <span class="m">${rows(st.p)} / 2 510</span>`);
+  if (st.err) {
+    L.push('');
+    L.push('<span class="r">client_loop: send disconnect: Connection reset</span>');
+    L.push('<span class="r">Connection to acme-prod closed.</span>');
+  }
+  if (st.p >= 1) {
+    L.push('<span class="m">[4/4]</span> restart api ................... <span class="g">ok</span>');
+    L.push('');
+    L.push('<span class="g">✓ Tayyor</span> <span class="m">· 4 daqiqa 12 soniya</span>');
+  }
+  const last = L.length - 1;
+  if (st.cursor && !st.err && st.p >= 1) L.push(PROMPT + '<span class="cursor"></span>');
+  else if (st.cursor && !st.err) L[last] += ' <span class="cursor"></span>';
+  return L.join('\n');
+}
+
+const T = {
+  intro: [0, 5.4],
+  term: [5.0, 20.6],
+  feat: [20.2, 29.4],
+  phone: [29.0, 36.6],
+  trust: [36.2, 41.4],
+  outro: [41.0, DURATION + 1],
+};
+// Story beats inside the terminal scene.
+const DROP = 9.0;      // connection dies
+const PULT = 11.6;     // switch to Pult
+const BACK = 14.6;     // reconnected
+const DONE = 17.4;     // task finished
+
+function renderTerm(t) {
+  const el = $('#s-term');
+  if (!scene(el, t, ...T.term)) return;
+
+  // Progress of the long task.
+  let p;
+  if (t < DROP) p = lerp(0.12, 0.48, prog(t, 5.6, DROP));
+  else if (t < BACK + 0.3) p = 0.48;
+  else p = lerp(0.48, 1, easeInOut(prog(t, BACK + 0.3, DONE)));
+  p = Math.floor(p * 100) / 100;
+
+  const pult = t >= PULT;
+  const err = t >= DROP + 0.35 && !pult;
+  const reconnecting = pult && t < BACK;
+  const blink = Math.floor(t * 1.6) % 2 === 0;
+  $('#term').innerHTML = termHTML({ p, err, cursor: (t < DROP || t > BACK) && blink });
+
+  // Headlines.
+  rise($('#headA'), t, 6.0, { out: PULT - 0.7, outDur: 0.5 });
+  rise($('#headC'), t, PULT - 0.1, { out: BACK - 0.1, outDur: 0.4 });
+  rise($('#headB'), t, BACK + 0.2, { dur: 0.9 });
+
+  // Window entrance.
+  const w = easeOut(prog(t, 5.0, 6.0));
+  $('#win').style.transform = `translateY(${(1 - w) * 40}px)`;
+
+  // Problem: the terminal greys out after the drop.
+  const dead = easeInOut(prog(t, DROP + 0.4, DROP + 1.4)) * (pult ? 0 : 1);
+  // Pult chrome replaces the plain ssh window.
+  const c = easeInOut(prog(t, PULT - 0.5, PULT + 0.2));
+  $('#plainTop').style.opacity = 1 - c;
+  $('#pultTop').style.opacity = c;
+  $('#status').style.opacity = c;
+  $('#status').style.transform = `translateY(${(1 - c) * 44}px)`;
+
+  // Reconnecting look (as in the app: dimmed, desaturated surface).
+  const rIn = easeInOut(prog(t, PULT - 0.2, PULT + 0.3));
+  const rOut = easeInOut(prog(t, BACK - 0.1, BACK + 0.4));
+  const dim = Math.max(dead, rIn * (1 - rOut));
+  $('#term').style.opacity = 1 - 0.55 * dim;
+  $('#term').style.filter = `saturate(${1 - 0.7 * dim})`;
+
+  const banner = $('#banner');
+  const bIn = easeOut(prog(t, PULT + 0.1, PULT + 0.45));
+  const bOut = easeInOut(prog(t, BACK - 0.15, BACK + 0.15));
+  banner.style.opacity = bIn * (1 - bOut);
+  banner.style.transform = `translate(-50%, ${(1 - bIn) * -8}px)`;
+  $('#spin').style.transform = `rotate(${(t * 400) % 360}deg)`;
+
+  $('#stDot').style.background = reconnecting ? 'var(--warn)' : 'var(--ok)';
+  $('#tabDot').style.background = reconnecting ? 'var(--warn)' : 'var(--ok)';
+  $('#stText').textContent = reconnecting ? 'Qayta ulanmoqda' : 'Ulangan';
+  $('#ping').textContent = reconnecting ? '—' : `${31 + (Math.floor(t * 2) % 3)} ms`;
+  $('#cpu').textContent = reconnecting ? '—' : `${[18, 22, 41, 37, 26][Math.floor(t * 1.5) % 5]}%`;
+}
+
+// ---------------------------------------------------------------- features
+// Which list item / screenshot is active over time.
+const FEAT = [
+  { at: 21.0, item: 0, img: 0 }, // Terminal
+  { at: 22.6, item: 1, img: 0 }, // Fayllar
+  { at: 24.2, item: 2, img: 2 }, // Muharrir
+  { at: 26.0, item: 3, img: 3 }, // transfer + reconnect banner
+  { at: 27.7, item: 3, img: 4 }, // transfer finished
+];
+function renderFeat(t) {
+  const el = $('#s-feat');
+  if (!scene(el, t, ...T.feat)) return;
+  rise($('#featK'), t, 20.4);
+  rise($('#featH'), t, 20.55);
+  const items = $$('.feat');
+  let cur = -1;
+  for (const f of FEAT) if (t >= f.at) cur = f.item;
+  items.forEach((it, i) => {
+    const at = FEAT.find((f) => f.item === i).at;
+    const k = easeOut(prog(t, at - 0.3, at + 0.4));
+    it.style.opacity = 0.0 + k * (i === cur ? 1 : 0.38);
+    it.style.transform = `translateX(${(1 - k) * -18}px)`;
+    it.querySelector('.n').style.color = i === cur ? 'var(--ok)' : 'var(--fg-3)';
+  });
+  // Screenshot: crossfades + slow drift.
+  const shot = $('#shot');
+  const s = easeOut(prog(t, 20.4, 21.4));
+  shot.style.transform = `translateY(${(1 - s) * 36}px) scale(${0.97 + 0.03 * s})`;
+  shot.style.opacity = s;
+  const imgs = $$('#shot img');
+  const vals = imgs.map(() => 0);
+  let prev = null;
+  for (const f of FEAT) {
+    const idx = imgs.findIndex((im) => Number(im.dataset.i) === f.img);
+    const k = easeInOut(prog(t, f.at - 0.35, f.at + 0.25));
+    if (prev == null) vals[idx] = 1;
+    else if (idx !== prev && k > 0) { vals[prev] = vals[prev] * (1 - k); vals[idx] = k; }
+    if (t >= f.at - 0.35) prev = idx;
+  }
+  imgs.forEach((im, i) => {
+    im.style.opacity = vals[i];
+    im.style.transform = `scale(${1.0 + 0.012 * prog(t, 20.2, 29.4)})`;
+  });
+}
+
+// ---------------------------------------------------------------- phones
+function renderPhone(t) {
+  const el = $('#s-phone');
+  if (!scene(el, t, ...T.phone)) return;
+  rise($('#phK'), t, 29.2);
+  rise($('#phH'), t, 29.35);
+  $$('.phones > div').forEach((ph, i) => {
+    const a = 29.7 + i * 0.45;
+    const k = easeOut(prog(t, a, a + 1.0));
+    ph.style.opacity = k;
+    const drift = (prog(t, 29, 36.6) - 0.5) * (i - 1) * -10;
+    ph.style.transform = `translateY(${(1 - k) * 90 + drift}px)`;
+  });
+}
+
+// ---------------------------------------------------------------- trust
+function renderTrust(t) {
+  const el = $('#s-trust');
+  if (!scene(el, t, ...T.trust)) return;
+  rise($('#trK'), t, 36.4);
+  $$('.trow').forEach((r, i) => rise(r, t, 36.7 + i * 0.55, { dist: 22 }));
+}
+
+// ---------------------------------------------------------------- intro / outro
+function renderIntro(t) {
+  const el = $('#s-intro');
+  if (!scene(el, t, ...T.intro, 0.01, 0.7)) return;
+  logo($('#logo1'), t, 0.2);
+  rise($('#brand1'), t, 1.4, { dur: 0.9, dist: 30 });
+  rise($('#tag1'), t, 2.2, { dur: 0.9, dist: 20 });
+}
+function renderOutro(t) {
+  const el = $('#s-outro');
+  if (!scene(el, t, ...T.outro)) return;
+  logo($('#logo2'), t, 41.1);
+  rise($('#brand2'), t, 42.0, { dur: 0.9 });
+  rise($('#tag2'), t, 42.6, { dur: 0.9, dist: 20 });
+  rise($('#plat2'), t, 43.2, { dur: 0.9, dist: 16 });
+}
+
+function seek(t, id = 0) {
+  $('#marker').style.background = `rgb(${id & 255}, ${(id >> 8) & 255}, 128)`;
+  renderIntro(t);
+  renderTerm(t);
+  renderFeat(t);
+  renderPhone(t);
+  renderTrust(t);
+  renderOutro(t);
+  // Mini logo in the window tab is always fully drawn.
+  logo($('#logoMini'), 100, 0);
+}
+window.seek = seek;
+
+// Resolves once fonts and images are ready (the renderer waits for this).
+window.ready = (async () => {
+  await document.fonts.ready;
+  await Promise.all(['640 72px "Inter Variable"', '22px "JetBrains Mono"', '600 22px "JetBrains Mono"'].map((f) => document.fonts.load(f, 'o‘g‘ —')));
+  await Promise.all($$('img').map((im) => im.decode().catch(() => { throw new Error('image failed: ' + im.src); })));
+  seek(0);
+  return { duration: DURATION, vertical: VERTICAL };
+})();
+
+// Preview in a normal browser: ?play=1 plays in real time, ?t=12.3 freezes a frame.
+const q = new URLSearchParams(location.search);
+if (q.get('t')) window.ready.then(() => seek(Number(q.get('t'))));
+if (q.get('play')) window.ready.then(() => { const t0 = performance.now(); const f = () => { seek(((performance.now() - t0) / 1000) % DURATION); requestAnimationFrame(f); }; f(); });
+</script>
+</body>
+</html>

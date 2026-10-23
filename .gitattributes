@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.png binary
+*.gif binary
+*.mp4 binary
+*.ttf binary
+*.otf binary
+*.ico binary

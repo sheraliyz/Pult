@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="uz">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'"
+    />
+    <title>Pult</title>
+    <link rel="stylesheet" href="../../node_modules/@fontsource-variable/inter/index.css" />
+    <link rel="stylesheet" href="../../node_modules/@fontsource/jetbrains-mono/400.css" />
+    <link rel="stylesheet" href="../../node_modules/@fontsource/jetbrains-mono/700.css" />
+    <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header id="titlebar"></header>
+      <main id="views"></main>
+      <footer id="statusbar"></footer>
+    </div>
+    <div id="layer"></div>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
