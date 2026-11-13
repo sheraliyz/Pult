@@ -14,7 +14,7 @@ Windows va Android. Bepul va ochiq kodli (MIT).
 
 Tayyor fayllar **Releases** sahifasida:
 
-- `Pult Setup 1.1.0.exe` — Windows o‘rnatuvchisi (Start menyu va ish stolida yorliq paydo bo‘ladi).
+- `Pult.Setup.1.1.0.exe` — Windows o‘rnatuvchisi (Start menyu va ish stolida yorliq paydo bo‘ladi).
 - `Pult-portable.exe` — o‘rnatmasdan ishlaydi.
 - `Pult.apk` — Android 7.0 va undan yangi telefonlar uchun.
 
@@ -213,6 +213,27 @@ flutter build apk --release --target-platform android-arm,android-arm64
 
 APK’ni imzolash uchun `mobile/android/key.properties` va kalit fayli kerak (ular repoda yo‘q).
 Ularsiz `flutter build apk --debug` bilan sinov versiyasini yig‘ish mumkin.
+
+### Release
+
+`.github/workflows/release.yml` EXE’larni Windows’da, APK’ni Linux’da GitHub’ning o‘zida yig‘adi
+va `package.json` dagi versiya bo‘yicha release chiqaradi (masalan, `v1.1.0`):
+
+1. Versiyani oshiring: `package.json` va `package-lock.json`, `mobile/pubspec.yaml` (`1.1.0+2`: `+` dan keyingi raqam har safar bittaga oshadi),
+   telefon sozlamalaridagi yozuv (`mobile/lib/ui/settings_sheet.dart`) va yuqoridagi fayl nomi.
+2. `main` ga merge qiling va **Actions → Release → Run workflow** ni bosing (yoki `v1.1.0` tag’ini push qiling).
+   Shu versiya uchun qayta ishga tushirilsa, release’dagi fayllar yangilanadi.
+
+Har bir pull request’da ham EXE va APK yig‘iladi (release chiqmaydi), tayyor EXE’lar run sahifasida **Artifacts** ostida 7 kun turadi.
+
+APK release’ga faqat 1.0.0 dagi kalit bilan imzolangan bo‘lsa qo‘shiladi, aks holda telefonlar uni yangilanish sifatida o‘rnatmaydi.
+Buning uchun **Settings → Secrets and variables → Actions** da `key.properties` dagi qiymatlar bilan to‘rtta secret kerak:
+`ANDROID_KEYSTORE_BASE64` (`.jks` faylining o‘zi, base64 ko‘rinishida), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`.
+`.jks` faylini Windows’da base64 qilib nusxalash:
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("<.jks fayl yo‘li>")) | Set-Clipboard
+```
 
 Tuzilishi: `src/main` — SSH ulanish, qayta ulanish, SFTP uzatish, serverdagi fayl amallari (Node.js);
 `src/renderer` — interfeys; `dev/` — sinov serveri, testlar va avtomatik skrinshot vositalari;
