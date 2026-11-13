@@ -23,7 +23,7 @@ import 'ui/widgets.dart';
 class Session extends ChangeNotifier {
   Session(this.app, this.server, this.conn)
       : files = FilesController(conn),
-        agents = Agents(conn) {
+        agents = Agents(conn, usage: () => app.store.settings.agentUsage) {
     conn.addListener(_onConn);
     conn.onShellExit = _onShellExit;
     conn.onShellBell = _onShellBell;

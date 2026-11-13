@@ -338,7 +338,8 @@ Future<void> _writeAtomic(SftpClient sftp, String p, String text, int mode) asyn
 /* ---------------- watcher ---------------- */
 
 class Agents extends ChangeNotifier {
-  Agents(this.conn) {
+  /// [usage]: are the limits shown? When not, agy is not asked on a timer.
+  Agents(this.conn, {bool Function()? usage}) : usage = usage ?? (() => true) {
     conn.agentPolling = true;
     conn.onAgentScan = (panes, files) => _scan(panes, files);
     conn.addListener(_onConn);
@@ -346,6 +347,7 @@ class Agents extends ChangeNotifier {
   }
 
   final Connection conn;
+  final bool Function() usage;
 
   bool detected = false;
   String? claudePath, agyPath;
@@ -434,7 +436,7 @@ class Agents extends ChangeNotifier {
     if (bridged && bridgeScriptVersion != 0 && bridgeScriptVersion != bridgeVersion) {
       unawaited(_updateScript().catchError((_) {}));
     }
-    if (agyPath != null && nowMs() - agyAt > 3 * 60000) {
+    if (usage() && agyPath != null && nowMs() - agyAt > 3 * 60000) {
       unawaited(refreshAgy());
     } else {
       _scheduleAgy();
@@ -457,7 +459,7 @@ class Agents extends ChangeNotifier {
         final hasAgy = next.values.any((p) => p.agent == Agent.agy);
         panes = next;
         dirty = true;
-        if (hadAgy && !hasAgy && agyPath != null) Timer(const Duration(seconds: 4), refreshAgy);
+        if (hadAgy && !hasAgy && agyPath != null && usage()) Timer(const Duration(seconds: 4), refreshAgy);
       }
       final seen = <String>{};
       for (final f in files) {
@@ -499,7 +501,7 @@ class Agents extends ChangeNotifier {
     if (agyPath == null || !conn.isReady || _disposed) return;
     final active = panes.values.any((p) => p.agent == Agent.agy);
     final minutes = agyError != null ? 15 : active ? 3 : 10;
-    _agyTimer = Timer(Duration(minutes: minutes), refreshAgy);
+    _agyTimer = Timer(Duration(minutes: minutes), () => usage() ? refreshAgy() : _scheduleAgy());
   }
 
   /// Ask agy for its quota; a call while one is running waits for that one.

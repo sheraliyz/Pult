@@ -262,9 +262,11 @@ function parseSettings(text) {
 /* ---------------- watcher ---------------- */
 
 class AgentWatch extends EventEmitter {
-  constructor(conn) {
+  /** usage: false = the limits are hidden, so agy is not asked on a timer. */
+  constructor(conn, { usage = true } = {}) {
     super();
     this.conn = conn;
+    this.usage = usage;
     this.claude = { path: null, bridged: false, version: 0, files: new Map() };
     this.agy = { path: null, usage: null, at: 0, error: null, busy: false, noLogFlag: false, timer: null };
     this.panes = {};
@@ -288,6 +290,14 @@ class AgentWatch extends EventEmitter {
     this.conn.off('state', this.onState);
     this.conn.off('agents:scan', this.onScan);
     this.conn.agentPolling = false;
+  }
+
+  /** Settings → "Limitlarni ko‘rsatish" changed. */
+  setUsage(on) {
+    this.usage = !!on;
+    if (!this.usage) clearTimeout(this.agy.timer);
+    else if (this.agy.path && Date.now() - this.agy.at > 3 * MIN) this.refreshAgy();
+    else this.scheduleAgy();
   }
 
   changed() {
@@ -350,7 +360,7 @@ class AgentWatch extends EventEmitter {
     if (this.claude.bridged && this.claude.version && this.claude.version !== BRIDGE_VERSION) {
       this.updateBridgeScript().catch(() => {});
     }
-    if (this.agy.path && Date.now() - this.agy.at > 3 * MIN) this.refreshAgy();
+    if (this.usage && this.agy.path && Date.now() - this.agy.at > 3 * MIN) this.refreshAgy();
     else this.scheduleAgy();
   }
 
@@ -373,7 +383,7 @@ class AgentWatch extends EventEmitter {
         this.panes = next;
         dirty = true;
         // An agy session just ended: its quota moved.
-        if (hadAgy && !hasAgy && this.agy.path) setTimeout(() => this.refreshAgy(), 4000);
+        if (hadAgy && !hasAgy && this.agy.path && this.usage) setTimeout(() => this.refreshAgy(), 4000);
         // agy is running somewhere we did not find it: look again.
         if (hasAgy && !this.agy.path && this.detected) this.detect();
       }
@@ -408,7 +418,7 @@ class AgentWatch extends EventEmitter {
 
   scheduleAgy() {
     clearTimeout(this.agy.timer);
-    if (!this.agy.path || this.conn.state !== 'ready') return;
+    if (!this.usage || !this.agy.path || this.conn.state !== 'ready') return;
     const active = Object.values(this.panes).some((p) => p.agent === 'agy');
     const ms = this.agy.error ? 15 * MIN : active ? 3 * MIN : 10 * MIN;
     this.agy.timer = setTimeout(() => this.refreshAgy(), ms);

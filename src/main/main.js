@@ -235,6 +235,7 @@ handle('settings:get', () => store.getSettings());
 handle('settings:set', (patch) => {
   const s = store.setSettings(patch);
   if ('theme' in patch) nativeTheme.themeSource = s.theme;
+  if ('agentUsage' in patch) for (const a of agentWatches.values()) a.setUsage(s.agentUsage !== false);
   return s;
 });
 
@@ -316,7 +317,7 @@ handle('conn:open', async (connId, serverId) => {
   if (!server) throw new Error('Server topilmadi');
   const c = new Connection(connId, server, { ask, store });
   connections.set(connId, c);
-  const agents = new AgentWatch(c);
+  const agents = new AgentWatch(c, { usage: store.getSettings().agentUsage !== false });
   agentWatches.set(connId, agents);
   agents.on('update', (s) => send('agents', connId, s));
   c.on('state', (s) => {
