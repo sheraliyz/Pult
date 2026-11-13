@@ -67,7 +67,7 @@ Future<void> showSettings(BuildContext context, Store store) {
                 child: Row(children: [
                   Icon(Icons.terminal_rounded, size: 16, color: p.fg3),
                   const SizedBox(width: 8),
-                  Text('Pult 1.0.0', style: TextStyle(color: p.fg2, fontSize: 12.5)),
+                  Text('Pult 1.1.0', style: TextStyle(color: p.fg2, fontSize: 12.5)),
                   Text('  ·  SSH · SFTP · tmux', style: TextStyle(color: p.fg3, fontSize: 12.5)),
                 ]),
               ),

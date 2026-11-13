@@ -14,7 +14,7 @@ Windows va Android. Bepul va ochiq kodli (MIT).
 
 Tayyor fayllar **Releases** sahifasida:
 
-- `Pult Setup 1.0.0.exe` — Windows o‘rnatuvchisi (Start menyu va ish stolida yorliq paydo bo‘ladi).
+- `Pult Setup 1.1.0.exe` — Windows o‘rnatuvchisi (Start menyu va ish stolida yorliq paydo bo‘ladi).
 - `Pult-portable.exe` — o‘rnatmasdan ishlaydi.
 - `Pult.apk` — Android 7.0 va undan yangi telefonlar uchun.
 
