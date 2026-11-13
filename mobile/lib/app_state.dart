@@ -9,8 +9,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'core/agents.dart';
 import 'core/connection.dart';
 import 'core/files.dart';
+import 'core/format.dart';
 import 'core/fsops.dart';
 import 'core/store.dart';
 import 'core/transfers.dart';
@@ -19,9 +21,12 @@ import 'ui/widgets.dart';
 
 /// One open server: a connection plus what the screen shows for it.
 class Session extends ChangeNotifier {
-  Session(this.app, this.server, this.conn) : files = FilesController(conn) {
+  Session(this.app, this.server, this.conn)
+      : files = FilesController(conn),
+        agents = Agents(conn, usage: () => app.store.settings.agentUsage) {
     conn.addListener(_onConn);
     conn.onShellExit = _onShellExit;
+    conn.onShellBell = _onShellBell;
     conn.onClipboard = (text) {
       Clipboard.setData(ClipboardData(text: text));
       final ctx = app.navKey.currentContext;
@@ -33,6 +38,9 @@ class Session extends ChangeNotifier {
   Server server;
   final Connection conn;
   final FilesController files;
+
+  /// AI agents on this server (Claude Code, agy): limits, panes.
+  final Agents agents;
   int tab = 0; // 0 = terminal, 1 = files
   RemoteShell? active;
   bool _restored = false;
@@ -87,7 +95,43 @@ class Session extends ChangeNotifier {
 
   void select(RemoteShell s) {
     active = s;
+    s.attention = false;
     notifyListeners();
+  }
+
+  // A bell in a terminal you are not looking at marks its tab.
+  void _onShellBell(RemoteShell sh) {
+    if (identical(sh, active) && tab == 0) return;
+    if (sh.attention) return;
+    sh.attention = true;
+    notifyListeners();
+  }
+
+  /// What runs in [sh] right now: Claude Code, agy or nothing.
+  Agent? agentIn(RemoteShell? sh) => sh?.session == null ? null : agents.panes[sh!.session]?.agent;
+
+  /// Start an agent in a new terminal, in [dir] or where the current terminal is.
+  Future<void> launchAgent(Agent kind, {String? dir, bool resume = false}) async {
+    if (!conn.isReady) return;
+    dir ??= active?.session == null ? null : agents.panes[active!.session]?.cwd;
+    final cmd = '${kind == Agent.claude ? 'claude' : 'agy'}${resume ? ' -c' : ''}';
+    final sh = await conn.openShell();
+    active = sh;
+    tab = 0;
+    notifyListeners();
+    sh.write('${dir != null && dir.isNotEmpty ? 'cd -- ${shq(dir)} && ' : ''}$cmd\r');
+  }
+
+  /// Upload phone files to ~/.pult/uploads/<time>/ and type their paths into
+  /// [sh] once they are on the server (Claude Code / agy read files by path).
+  Future<void> sendFiles(RemoteShell sh, List<String> localPaths) async {
+    if (localPaths.isEmpty || !conn.isReady) return;
+    final dir = await agents.uploadDir();
+    final job = app.transfers.upload(conn, localPaths, dir);
+    final remote = [for (final p in localPaths) '$dir/${p.split(RegExp(r'[\\/]')).last}'];
+    app.whenDone(job, (j) {
+      if (j.state == JobState.done && !sh.exited) sh.terminal.paste('${remote.map(pathArg).join(' ')} ');
+    });
   }
 
   Future<void> closeShell(RemoteShell s) async {
@@ -101,6 +145,7 @@ class Session extends ChangeNotifier {
   @override
   void dispose() {
     conn.removeListener(_onConn);
+    agents.dispose();
     super.dispose();
   }
 }
@@ -129,6 +174,24 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   late final Prompter prompter = DialogPrompter(navKey);
   StreamSubscription<dynamic>? _net;
   String? _downloadDir;
+
+  final _waiters = <Job, void Function(Job)>{};
+
+  /// Run [fn] when [job] ends (done, failed or cancelled).
+  void whenDone(Job job, void Function(Job) fn) {
+    _waiters[job] = fn;
+    if (!_watching) {
+      _watching = true;
+      transfers.addListener(_checkWaiters);
+    }
+  }
+
+  bool _watching = false;
+  void _checkWaiters() {
+    for (final j in _waiters.keys.where((j) => !j.active).toList()) {
+      _waiters.remove(j)?.call(j);
+    }
+  }
 
   void init() {
     WidgetsBinding.instance.addObserver(this);

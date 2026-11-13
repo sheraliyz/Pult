@@ -78,6 +78,9 @@ String tmuxScript(String name, int cols, int rows) {
   ].join('; ').replaceAll('then; ', 'then ');
 }
 
+// Same as the desktop app: "a" lists what runs in each Pult terminal (AI
+// agents: Claude Code, agy) plus checksums of ~/.pult/state/*.json; "g <file>"
+// returns one of those files.
 const _monitorScript = 'while IFS= read -r l; do case "\$l" in '
     'p) echo p;; '
     's) read -r x c < /proc/stat; echo "cpu \$c"; '
@@ -85,7 +88,22 @@ const _monitorScript = 'while IFS= read -r l; do case "\$l" in '
     'echo "disk \$(df -Pk / 2>/dev/null | tail -n 1)"; '
     'read -r up idle < /proc/uptime; echo "up \$up"; '
     'echo end;; '
+    'a) tmux -u -L pult list-panes -a -F "ap|::|#{session_name}|::|#{pane_current_command}|::|#{pane_current_path}|::|#{pane_title}" 2>/dev/null; '
+    'for f in "\$HOME"/.pult/state/*.json; do [ -f "\$f" ] && echo "af \$(cksum < "\$f") \$f"; done; echo aend;; '
+    r'g\ *) echo gb; cat -- "${l#g }" 2>/dev/null; echo; echo ge;; '
     'esac; done';
+
+/// One Pult terminal as the monitor sees it (tmux pane).
+class PaneInfo {
+  const PaneInfo(this.session, this.command, this.cwd, this.title);
+  final String session, command, cwd, title;
+}
+
+/// A ~/.pult/state file and its checksum ("crc:size").
+class StateFile {
+  const StateFile(this.path, this.sum);
+  final String path, sum;
+}
 
 const _probeScript =
     'command -v tmux >/dev/null 2>&1 && { echo T; tmux -L pult ls -F "#{session_name}" 2>/dev/null; true; } || echo N; echo "H \$HOME"';
@@ -157,6 +175,17 @@ class Connection extends ChangeNotifier {
 
   /// A shell whose remote process ended by itself.
   void Function(RemoteShell shell)? onShellExit;
+
+  /// A shell rang its bell (e.g. Claude Code finished or asks for permission).
+  void Function(RemoteShell shell)? onShellBell;
+
+  /// AI agents (see agents.dart): poll panes + state files on every tick.
+  bool agentPolling = false;
+  void Function(List<PaneInfo> panes, List<StateFile> files)? onAgentScan;
+  List<PaneInfo>? _scanPanes;
+  List<StateFile>? _scanFiles;
+  final _fetches = <Completer<String?>>[];
+  List<String>? _fetchBuf;
 
   SSHClient? _client;
   SSHSocket? _socket;
@@ -526,7 +555,7 @@ class Connection extends ChangeNotifier {
         if (gen != _gen || _monitor == null) return;
         _pingSentAt = DateTime.now();
         try {
-          m.write(Uint8List.fromList(utf8.encode('p\ns\n')));
+          m.write(Uint8List.fromList(utf8.encode(agentPolling ? 'p\ns\na\n' : 'p\ns\n')));
         } catch (_) {}
       }
 
@@ -542,9 +571,60 @@ class Connection extends ChangeNotifier {
     _monitorTimer?.cancel();
     _monitor?.close();
     _monitor = null;
+    _scanPanes = _scanFiles = null;
+    _fetchBuf = null;
+    for (final f in _fetches) {
+      if (!f.isCompleted) f.complete(null);
+    }
+    _fetches.clear();
+  }
+
+  /// Read a small text file through the monitor channel (no new SSH channel).
+  Future<String?> monitorFetch(String path) {
+    final m = _monitor;
+    if (m == null || path.contains('\n') || path.contains('\r')) return Future.value(null);
+    final c = Completer<String?>();
+    _fetches.add(c);
+    try {
+      m.write(Uint8List.fromList(utf8.encode('g $path\n')));
+    } catch (_) {
+      _fetches.remove(c);
+      return Future.value(null);
+    }
+    return c.future;
   }
 
   void _onMonitorLine(String line) {
+    // Inside a "g" reply every line is file content until "ge".
+    final buf = _fetchBuf;
+    if (buf != null) {
+      if (line == 'ge') {
+        _fetchBuf = null;
+        if (_fetches.isNotEmpty) _fetches.removeAt(0).complete(buf.join('\n'));
+      } else {
+        buf.add(line);
+      }
+      return;
+    }
+    if (line == 'gb') {
+      _fetchBuf = [];
+      return;
+    }
+    if (line.startsWith('ap|::|')) {
+      final f = line.split('|::|');
+      if (f.length >= 5) (_scanPanes ??= []).add(PaneInfo(f[1], f[2], f[3], f.sublist(4).join('|::|')));
+      return;
+    }
+    if (line.startsWith('af ')) {
+      final m = RegExp(r'^af (\d+) (\d+) (.+)$').firstMatch(line);
+      if (m != null) (_scanFiles ??= []).add(StateFile(m[3]!, '${m[1]}:${m[2]}'));
+      return;
+    }
+    if (line == 'aend') {
+      onAgentScan?.call(_scanPanes ?? const [], _scanFiles ?? const []);
+      _scanPanes = _scanFiles = null;
+      return;
+    }
     final parts = line.trim().split(RegExp(r'\s+'));
     if (parts.isEmpty) return;
     final nums = parts.skip(1).map((e) => int.tryParse(e) ?? double.tryParse(e)?.toInt() ?? 0).toList();
@@ -699,8 +779,12 @@ class RemoteShell {
       },
       onTitleChange: (t) => title = t,
       onPrivateOSC: _osc,
+      onBell: () => conn.onShellBell?.call(this),
     );
   }
+
+  /// Rang its bell while another terminal was in front.
+  bool attention = false;
 
   final Connection conn;
   late final Terminal terminal;
@@ -781,6 +865,16 @@ class RemoteShell {
     }
     try {
       ch.write(Uint8List.fromList(utf8.encode(data)));
+    } catch (_) {}
+  }
+
+  /// A line break inside the prompt of Claude Code / agy: LF (Ctrl+J), which
+  /// [write] would turn into Enter.
+  void newline() {
+    final ch = _ch;
+    if (ch == null || exited || !conn.isReady) return;
+    try {
+      ch.write(Uint8List.fromList(const [0x0a]));
     } catch (_) {}
   }
 

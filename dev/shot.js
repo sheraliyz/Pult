@@ -144,6 +144,74 @@ const SCENARIOS = {
     { wait: 2500 },
     { shot: 'failed' },
   ],
+  // AI agents against the mock's fake `claude` / `agy` (start it with a fresh
+  // MOCK_ROOT, or remove ~/.claude and ~/.pult there, to see the setup step).
+  agents: [
+    { js: 'window.__pult.openServer(window.__pult.servers.find(s => s.id === "demo"))' },
+    { wait: 3000 },
+    { shot: 'ai-statusbar-setup' },
+    { js: 'document.querySelector(".sb-agent").click()' },
+    { wait: 900 },
+    { shot: 'ai-panel-setup' },
+    { js: '[...document.querySelectorAll(".ai-panel .btn-primary")].find(b => b.textContent === "Ulash")?.click()' },
+    { wait: 1500 },
+    { js: 'document.querySelector(".ai-panel .icon-btn")?.click()' },
+    { js: 'window.__pult.activeSession().launchAgent("claude")' },
+    { wait: 1500 },
+    { type: 'README ga o‘rnatish bo‘limini qo‘sh\r' },
+    { wait: 2600 },
+    { shot: 'ai-claude' },
+    { js: 'window.__pult.activeSession().openAgentMenu()' },
+    { wait: 300 },
+    { shot: 'ai-menu' },
+    { key: 'Escape' },
+    { js: 'document.querySelector(".sb-agent").click()' },
+    { wait: 900 },
+    { shot: 'ai-panel' },
+    { js: 'document.querySelector(".ai-panel .icon-btn")?.click()' },
+    // Ask Claude something, then look at another terminal: its bell marks the tab.
+    { type: 'testlarni ishga tushir\r' },
+    { js: 'window.__pult.activeSession().select(window.__pult.activeSession().shells[0])' },
+    { wait: 2200 },
+    { shot: 'ai-attention' },
+    { js: 'window.__pult.activeSession().launchAgent("agy")' },
+    { wait: 1200 },
+    { type: 'deploy skriptini tekshir\r' },
+    { wait: 2200 },
+    { shot: 'ai-agy' },
+    { js: 'window.__pult.activeSession().setMode("files")' },
+    { wait: 1200 },
+    { js: '(() => { const f = window.__pult.activeSession().files; f.select("apps"); const r = f.list.querySelector(\'[data-name="apps"]\').getBoundingClientRect(); f.rowMenu(r.left + 120, r.top + 10); })()' },
+    { wait: 400 },
+    { shot: 'ai-files-menu' },
+    { key: 'Escape' },
+    { js: 'document.querySelector(".tb-settings").click()' },
+    { wait: 600 },
+    { js: 'document.querySelector(".modal .m-body").scrollTop = 9999' },
+    { wait: 300 },
+    { shot: 'ai-settings' },
+  ],
+  // Typing into an agent: Shift+Enter, files handed over, a pasted screenshot.
+  'agent-input': [
+    { js: 'window.__pult.openServer(window.__pult.servers.find(s => s.id === "demo"))' },
+    { wait: 3000 },
+    { js: 'window.__pult.activeSession().launchAgent("claude")' },
+    { wait: 1500 },
+    { chars: 'birinchi qator' },
+    { key: 'Shift+Return' },
+    { chars: 'ikkinchi qator' },
+    { wait: 400 },
+    { shot: 'input-newline' },
+    { key: 'Return' },
+    { wait: 1800 },
+    { js: `window.__pult.activeSession().active.sendFiles([${JSON.stringify(path.join(__dirname, '..', 'README.md'))}])` },
+    { wait: 2500 },
+    { shot: 'input-files' },
+    { clipboardImage: true },
+    { js: 'window.__pult.activeSession().active.pasteImage()' },
+    { wait: 1500 },
+    { shot: 'input-image' },
+  ],
   hostkey: [
     { js: 'window.__pult.openServer(window.__pult.servers.find(s => s.id === "demo"))' },
     { wait: 2000 },
@@ -167,6 +235,21 @@ app.on('browser-window-created', (_e, win) => {
             `(() => { const v = window.__pult.activeSession()?.active; if (v) v.write(${JSON.stringify(step.type)}); })()`,
             true,
           );
+        }
+        if (step.key) {
+          // "Escape", "Shift+Return", "Control+Shift+A"
+          const parts = step.key.split('+');
+          const keyCode = parts.pop();
+          const modifiers = parts.map((m) => m.toLowerCase());
+          win.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
+          if (keyCode.length === 1 && !modifiers.length) win.webContents.sendInputEvent({ type: 'char', keyCode, modifiers });
+          win.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
+        }
+        if (step.chars) for (const ch of step.chars) win.webContents.sendInputEvent({ type: 'char', keyCode: ch });
+        if (step.clipboardImage) {
+          const { clipboard, ClipboardItem } = require('electron');
+          const png = fs.readFileSync(path.join(__dirname, '..', 'assets', 'icon.png'));
+          await clipboard.write([new ClipboardItem({ 'image/png': new Blob([png], { type: 'image/png' }) })]);
         }
         if (step.wait) await sleep(step.wait);
         if (step.shot) {
@@ -202,3 +285,11 @@ ipcMain.handle('clip:write', (_e, text) => {
 });
 ipcMain.removeHandler('clip:read');
 ipcMain.handle('clip:read', () => ({ ok: true, value: '' }));
+ipcMain.removeHandler('clip:hasImage');
+ipcMain.handle('clip:hasImage', () => ({ ok: true, value: false }));
+// Desktop notifications are logged, not shown.
+ipcMain.removeHandler('notify');
+ipcMain.handle('notify', (_e, n) => {
+  console.log('NOTIFY', JSON.stringify(n));
+  return { ok: true, value: true };
+});

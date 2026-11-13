@@ -33,7 +33,7 @@ export class Transfers {
   update(job) {
     const isNew = !this.jobs.has(job.id);
     this.jobs.set(job.id, job);
-    if (isNew) this.toggle(true);
+    if (isNew && !job.quiet) this.toggle(true);
     this.render();
   }
 

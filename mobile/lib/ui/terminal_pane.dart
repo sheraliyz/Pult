@@ -1,6 +1,7 @@
 // The terminal: xterm view, copy pill, exit overlay, and the extra-keys row
 // that the phone keyboard lacks (Esc, Tab, Ctrl, Alt, arrows…).
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
@@ -130,9 +131,11 @@ class _Pill extends StatelessWidget {
 }
 
 /// Keys a phone keyboard doesn't have. Ctrl/Alt are sticky for one key.
+/// With Claude Code / agy in front: a "new line" key and "send a file".
 class ExtraKeys extends StatefulWidget {
-  const ExtraKeys({super.key, required this.shell});
+  const ExtraKeys({super.key, required this.shell, this.session});
   final RemoteShell shell;
+  final Session? session;
 
   @override
   State<ExtraKeys> createState() => _ExtraKeysState();
@@ -162,9 +165,26 @@ class _ExtraKeysState extends State<ExtraKeys> {
     if (t != null && t.isNotEmpty) s.terminal.paste(t.replaceAll(RegExp(r'\r?\n'), '\r'));
   }
 
+  // Photos, screenshots, logs… go to ~/.pult/uploads on the server and the
+  // agent gets their paths (Claude Code and agy read images by path).
+  Future<void> _sendFiles() async {
+    final session = widget.session;
+    if (session == null) return;
+    final picked = await FilePicker.pickFiles();
+    final paths = picked.map((f) => f.path).whereType<String>().toList();
+    if (paths.isEmpty) return;
+    try {
+      await session.sendFiles(s, paths);
+      if (mounted) toast(context, paths.length == 1 ? 'Serverga yuklanmoqda…' : '${paths.length} ta fayl yuklanmoqda…');
+    } catch (e) {
+      if (mounted) toast(context, '$e', error: true);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = context.pal;
+    final agent = widget.session?.agentIn(s) != null;
     Widget key(String label, VoidCallback onTap, {bool on = false, IconData? icon, double w = 46}) => Padding(
           padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
           child: Material(
@@ -194,6 +214,14 @@ class _ExtraKeysState extends State<ExtraKeys> {
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 6),
             child: Row(children: [
+              if (agent) ...[
+                // LF: a line break inside the agent's prompt (Enter sends).
+                key('', () {
+                  s.newline();
+                  HapticFeedback.selectionClick();
+                }, icon: Icons.subdirectory_arrow_left_rounded, w: 40),
+                key('', _sendFiles, icon: Icons.attach_file_rounded, w: 40),
+              ],
               key('Esc', () => _key(TerminalKey.escape)),
               key('Tab', () => _key(TerminalKey.tab)),
               key('Ctrl', () => setState(() => s.ctrl = !s.ctrl), on: s.ctrl),

@@ -32,12 +32,41 @@ Ilova raqamli imzolanmagan, shuning uchun Windows birinchi marta “Windows prot
 - **Fayl uzatish davom etadi.** Yuklash/yuklab olish paytida aloqa uzilsa, ish to‘xtab turadi va
   qayta ulanganda boshidan emas, qolgan joyidan davom etadi.
 
+## AI agentlar: Claude Code va agy
+
+![AI limitlari](docs/ai-limits.png)
+
+Serverda [Claude Code](https://code.claude.com) (`claude`) yoki Antigravity CLI (`agy`) o‘rnatilgan bo‘lsa, Pult ularni o‘zi topadi.
+
+- **Limitlar doim ko‘rinib turadi.** Holat qatorida obunangizning 5 soatlik va haftalik limiti qancha ishlatilgani,
+  bosganda esa batafsil: qachon tiklanishi, qolgan vaqt, joriy terminaldagi model va kontekst.
+  - *Claude Code:* birinchi marta holat qatoridagi **Claude → limitni ulash** ni bosing. Pult serverdagi
+    `~/.claude/settings.json` ga kichik status line skriptini (`~/.pult/bin/claude-statusline`) ulaydi —
+    Claude Code limit ma’lumotini aynan shu yo‘l bilan beradi. O‘zingizning status line’ingiz bo‘lsa, u ham
+    ishlashda davom etadi; avvalgi fayl `settings.json.pult-backup` sifatida saqlanadi, **Uzish** hammasini
+    avvalgi holatiga qaytaradi. Ma’lumot Claude Code har javob berganda yangilanadi (faqat Pro/Max obunada bor).
+  - *agy:* `agy -p /usage` orqali o‘zi olinadi (har 3–10 daqiqada, panelda **yangilash** tugmasi ham bor),
+    har bir model guruhi alohida ko‘rsatiladi.
+- **Bir bosishda ishga tushirish.** Asboblar qatoridagi **AI** tugmasi (`Ctrl+Shift+A`): Claude Code yoki agy yangi
+  terminalda, joriy terminal turgan papkada ochiladi; **oxirgi suhbat** (`-c`) ham bor. Fayllarda papkani
+  o‘ng tugma bilan bosing → **Claude Code’ni shu yerda ochish**.
+- **Qaysi terminalda agent ishlayotgani** yorliqda belgi bilan ko‘rinadi.
+- **Bildirishnoma.** Boshqa oyna yoki serverda bo‘lsangiz va agent ishni tugatsa yoki ruxsat so‘rasa (terminal signali),
+  yorliqda nuqta paydo bo‘ladi va Windows bildirishnomasi chiqadi — bosilsa, o‘sha terminal ochiladi.
+  Claude Code uchun signal limitlarni ulaganda yoqiladi (`preferredNotifChannel`, agar o‘zingiz boshqasini tanlamagan bo‘lsangiz).
+- **Shift+Enter — yangi qator** (xabarni yubormasdan).
+- **Skrinshot va fayllar.** Rasmni `Ctrl+V` bilan qo‘ysangiz yoki faylni terminalga sudrab tashlasangiz, u serverdagi
+  `~/.pult/uploads` papkasiga yuklanadi va yo‘li yoziladi — Claude Code va agy rasmni shu yo‘l orqali ko‘radi.
+  7 kundan eski yuklamalar o‘zi o‘chiriladi.
+- Sozlamalar → **AI agentlar**: limitlar, bildirishnomalar, Shift+Enter va ishga tushirish buyrug‘i
+  (masalan, `claude --model opus`).
+
 ## Imkoniyatlar
 
 - To‘liq terminal (xterm.js): ranglar, vim, htop, mc, sichqoncha, Unicode, qidiruv.
 - Serverdagi dasturlar (tmux, vim, Claude CLI) nusxalagan matn to‘g‘ridan-to‘g‘ri Windows buferiga tushadi (OSC 52).
 - Bir serverda bir nechta terminal, bir vaqtda bir nechta server.
-- Holat qatori: ping, CPU, RAM, disk, uptime.
+- Holat qatori: ping, CPU, RAM, disk, uptime va AI agent limitlari.
 - Parollar Windows himoyasi (DPAPI) bilan shifrlab saqlanadi. Server kaliti birinchi ulanishda tasdiqlanadi.
 - Parol, SSH kalit yoki ssh-agent orqali kirish; `~/.ssh/config` dan import.
 - Qorong‘i va yorug‘ mavzu.
@@ -75,6 +104,8 @@ Ilova raqamli imzolanmagan, shuning uchun Windows birinchi marta “Windows prot
 | `Ctrl+Shift+1` `2` `3` | Terminal / Fayllar / Yonma-yon |
 | `Ctrl+Tab` | serverlar orasida o‘tish |
 | `Ctrl+PageUp/PageDown` | terminallar orasida o‘tish |
+| `Ctrl+Shift+A` | AI agent: Claude Code / agy ni yangi terminalda ochish, limitlar |
+| `Shift+Enter` | Claude Code / agy’da yangi qator (yubormasdan) |
 | `Ctrl+C` / `Ctrl+V` | belgilangan bo‘lsa nusxalash / qo‘yish (`Ctrl+Shift+C/V` ham ishlaydi) |
 | O‘ng tugma | belgilangan bo‘lsa nusxalash, aks holda qo‘yish |
 | `Shift` + sichqoncha bilan belgilash | sichqonchani o‘zi ushlaydigan dasturlarda (Claude CLI, vim, mc, htop) ham matnni belgilash |
@@ -125,6 +156,10 @@ Play Protect ogohlantirsa: **Baribir o‘rnatish**.
 - Serverdagi dasturlar (Claude CLI, tmux, vim) nusxalagan matn telefon buferiga tushadi.
 - Fayllarda: nusxalash/kesib olish/qo‘yish, dublikat, arxivlash va arxivni ochish, qidiruv, xususiyatlar.
 - Muharrir: kod ranglari, qator raqamlari, qidirish va almashtirish, qatorga o‘tish, bekor qilish/qaytarish.
+- **AI agentlar:** yuqori panel ostida Claude Code va agy limitlari (5 soatlik va haftalik); ✨ tugmasi —
+  Claude Code yoki agy ni yangi terminalda ochish (**oxirgi suhbat** ham), limitlar tafsiloti va Claude limitlarini ulash/uzish.
+  Terminal yorlig‘ida agent belgisi, boshqa terminalda signal bo‘lsa — nuqta. Agent ishlayotganda qo‘shimcha
+  tugmalarda `↵` (yangi qator, yubormasdan) va `📎` (rasm yoki faylni serverga yuborib, yo‘lini yozish).
 
 **Telefonga xos:**
 - Klaviatura ustida qo‘shimcha tugmalar: `Esc` `Tab` `Ctrl` `Alt` `← ↓ ↑ →` `- / | ~` `Home` `End` `PgUp` `PgDn`, qo‘yish.
@@ -146,14 +181,17 @@ Play Protect ogohlantirsa: **Baribir o‘rnatish**.
 - `tmux` — sessiyalar saqlanishi uchun (bo‘lmasa ham ishlaydi, faqat uzilganda sessiya saqlanmaydi).
 - Nusxalash, arxiv va qidiruv uchun oddiy Linux buyruqlari: `cp`, `mv`, `tar`, `find`, `grep`, `du`, `stat`.
   `.zip` uchun `zip`/`unzip` yoki `python3` kerak — topilmasa, ilova buni aniq aytadi.
+- AI agentlar uchun qo‘shimcha hech narsa kerak emas: Pult o‘z fayllarini faqat serverdagi `~/.pult` papkasida saqlaydi
+  (status line skripti, limit ma’lumoti, yuklangan rasmlar).
 
 ## Ishlab chiqish
 
 ```bash
 npm install
 npm start          # ilovani ishga tushirish
-npm run mock       # sinov uchun lokal SSH server (127.0.0.1:2222, demo/demo)
+npm run mock       # sinov uchun lokal SSH server (127.0.0.1:2222, demo/demo; ichida soxta `claude` va `agy` bor)
 npm run dist       # release uchun .exe yig‘ish
+MOCK_ROOT=<mock papka> node dev/agents-test.js   # AI agentlar: aniqlash, status line, limitlar (mock server kerak)
 ```
 
 Muharrir (CodeMirror 6) bitta faylga yig‘ilgan: `src/renderer/vendor/codemirror.js`. Uni yangilash uchun:
@@ -168,6 +206,7 @@ Telefon versiyasi (`mobile/`, Flutter):
 
 ```bash
 flutter test test/core_test.dart --dart-define=MOCK_ROOT=<mock papka>   # SSH yadrosi testlari (mock server kerak)
+flutter test test/agents_test.dart                                       # AI agentlar: limitlarni o‘qish, skript desktop bilan bir xil
 flutter test test/screens_test.dart --update-goldens                    # ekran rasmlari: test/shots
 flutter build apk --release --target-platform android-arm,android-arm64
 ```

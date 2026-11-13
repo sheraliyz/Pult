@@ -55,6 +55,13 @@ Future<void> showSettings(BuildContext context, Store store) {
                 value: s.extraKeys,
                 onChanged: (v) => update(() => s.extraKeys = v),
               ),
+              title('AI agentlar'),
+              SwitchRow(
+                title: 'Limitlarni ko‘rsatish',
+                hint: 'Claude Code va agy obuna limitlari (5 soatlik, haftalik) yuqori panel ostida turadi.',
+                value: s.agentUsage,
+                onChanged: (v) => update(() => s.agentUsage = v),
+              ),
               Padding(
                 padding: const EdgeInsets.only(top: 22),
                 child: Row(children: [

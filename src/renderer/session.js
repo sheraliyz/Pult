@@ -6,6 +6,7 @@ import { menu, toast } from './ui.js';
 import { TermView } from './terminal.js';
 import { FilesView } from './files.js';
 import { describeError } from './errors.js';
+import { AGENTS, cleanTitle, agentMenuItems, agentCommand, openUsagePanel, closeUsagePanel, refreshUsagePanel } from './agents.js';
 
 let seq = 0;
 const uid = (p) => `${p}${Date.now().toString(36)}${(++seq).toString(36)}`;
@@ -25,6 +26,7 @@ export class Session {
     this.editor = null;
     this.everReady = false;
     this.dropped = false;
+    this.agents = null; // AI agents on this server (see src/main/agents.js)
     this.build();
   }
 
@@ -41,12 +43,20 @@ export class Session {
       modeBtn('split', 'split', null, 'Yonma-yon · Ctrl+Shift+3'),
     );
     this.shellTabs = h('div', { class: 'shell-tabs' });
+    this.aiBtn = h(
+      'button',
+      { class: 'shell-ai', type: 'button', hidden: true, 'data-tip': 'AI agent: Claude Code, agy · Ctrl+Shift+A', onclick: () => this.openAgentMenu() },
+      icon('spark', 15),
+      h('span', null, 'AI'),
+      icon('chevronDown', 12),
+    );
     this.toolbar = h(
       'div',
       { class: 's-toolbar' },
       this.modeSeg,
       h('div', { class: 'tb-divider' }),
       this.shellTabs,
+      this.aiBtn,
       h('div', { class: 'grow' }),
       h('button', { class: 'icon-btn', type: 'button', 'data-tip': 'Terminalda qidirish · Ctrl+Shift+F', onclick: () => this.active?.openSearch() }, icon('search', 16)),
       h('button', { class: 'icon-btn', type: 'button', 'data-tip': 'Server sozlamalari', onclick: () => this.app.editServer(this.server) }, icon('sliders', 16)),
@@ -259,6 +269,7 @@ export class Session {
     this.body.style.setProperty('--split', `${this.split * 100}%`);
     for (const b of this.modeSeg.children) b.classList.toggle('on', b.dataset.mode === this.mode);
     this.shellTabs.hidden = this.mode === 'files';
+    this.renderAiButton();
   }
 
   ensureFiles() {
@@ -306,9 +317,12 @@ export class Session {
   select(view) {
     if (!view) return;
     this.active = view;
+    if (this.app.activeId === this.id) view.attention = false;
     this.showOnly(view);
     this.renderShellTabs();
+    this.updateAttention();
     if (this.mode !== 'files') requestAnimationFrame(() => view.focus());
+    if (this.app.activeId === this.id) this.app.renderStatus();
   }
 
   async closeShell(view) {
@@ -343,14 +357,16 @@ export class Session {
   renderShellTabs() {
     clear(this.shellTabs);
     this.shells.forEach((s, i) => {
+      const agent = this.agentOf(s);
       const pill = h(
         'div',
         {
-          class: `shell-pill ${s === this.active ? 'on' : ''} ${s.exited ? 'exited' : ''}`,
+          class: `shell-pill ${s === this.active ? 'on' : ''} ${s.exited ? 'exited' : ''} ${agent ? `agent agent-${agent}` : ''} ${s.attention ? 'attn' : ''}`,
           role: 'tab',
-          'data-tip': s.title || `Terminal ${i + 1}${s.persistent ? ' · tmux' : ''}`,
+          'data-tip': this.shellTip(s, i),
           onclick: () => this.select(s),
         },
+        agent && h('span', { class: 'pill-agent' }, icon(AGENTS[agent].icon, 12)),
         h('span', { class: 'pill-num' }, String(i + 1)),
         h('button', {
           class: 'pill-close',
@@ -369,6 +385,8 @@ export class Session {
         e.preventDefault();
         menu(e.clientX, e.clientY, [
           { label: 'Yangi terminal', icon: 'plus', hint: 'Ctrl+Shift+T', onClick: () => this.addShell() },
+          ...(this.hasAgents() ? ['-', ...agentMenuItems(this, { resume: false })] : []),
+          '-',
           { label: 'Qidirish', icon: 'search', hint: 'Ctrl+Shift+F', onClick: () => (this.select(s), s.openSearch()) },
           { label: 'Ekranni tozalash', icon: 'refresh', onClick: () => s.term.clear() },
           '-',
@@ -390,6 +408,108 @@ export class Session {
     requestAnimationFrame(() => view.focus());
   }
 
+  /* ---------------- AI agents (Claude Code, agy) ---------------- */
+
+  onAgents(st) {
+    const before = JSON.stringify(this.agents?.panes || {});
+    this.agents = st;
+    if (JSON.stringify(st.panes || {}) !== before) this.renderShellTabs();
+    this.renderAiButton();
+    refreshUsagePanel(this);
+    if (this.app.activeId === this.id) this.app.renderStatus();
+  }
+
+  hasAgents() {
+    const st = this.agents;
+    return !!(st && (st.claude?.path || st.agy?.path || Object.values(st.panes || {}).some((p) => p.agent)));
+  }
+
+  /** 'claude' | 'agy' | null — what runs in this terminal right now. */
+  agentOf(view) {
+    return (view?.attach && this.agents?.panes?.[view.attach]?.agent) || null;
+  }
+
+  shellTip(view, i) {
+    const pane = view.attach ? this.agents?.panes?.[view.attach] : null;
+    const agent = pane?.agent;
+    if (!agent) return view.title || `Terminal ${i + 1}${view.persistent ? ' · tmux' : ''}`;
+    const parts = [AGENTS[agent].label];
+    const title = cleanTitle(pane.title);
+    if (title && !/^(claude code|agy|antigravity)/i.test(title)) parts.push(title);
+    const snap = agent === 'claude' ? this.agents?.claude?.sessions?.[view.attach] : null;
+    if (snap?.ctx != null) parts.push(`kontekst ${Math.round(snap.ctx)}%`);
+    return parts.join(' · ');
+  }
+
+  renderAiButton() {
+    if (!this.aiBtn) return;
+    this.aiBtn.hidden = this.mode === 'files' || !this.hasAgents();
+  }
+
+  openAgentMenu() {
+    const r = (this.aiBtn.hidden ? this.shellTabs : this.aiBtn).getBoundingClientRect();
+    menu(r.left, r.bottom + 4, [
+      ...agentMenuItems(this),
+      '-',
+      { label: 'Limitlar', icon: 'gauge', onClick: () => openUsagePanel(this, document.querySelector('.sb-agent') || this.aiBtn) },
+    ]);
+  }
+
+  /**
+   * Start an agent in a new terminal tab. Without `dir` it starts where the
+   * current terminal is (its working directory), so "AI → Claude Code" from a
+   * project folder works on that project.
+   */
+  async launchAgent(kind, { dir = null, resume = false } = {}) {
+    if (this.state.state !== 'ready') {
+      toast('Server bilan aloqa yo‘q', 'err');
+      return;
+    }
+    if (!dir) dir = (this.active?.attach && this.agents?.panes?.[this.active.attach]?.cwd) || null;
+    if (this.mode === 'files') this.setMode('split');
+    const view = await this.addShell();
+    if (!view) return;
+    const cmd = agentCommand(this.app, kind, { resume });
+    view.write(`${dir ? `cd -- ${shellQuote(dir)} && ` : ''}${cmd}\r`);
+    requestAnimationFrame(() => view.focus());
+  }
+
+  /** A terminal rang its bell (Claude finished, asks for permission…). */
+  onBell(view) {
+    const looking = this.app.activeId === this.id && this.active === view && this.mode !== 'files' && document.hasFocus() && !document.hidden;
+    if (looking) return;
+    if (!view.attention) {
+      view.attention = true;
+      this.renderShellTabs();
+      this.updateAttention();
+    }
+    if (!this.app.settings.agentNotify) return;
+    const now = Date.now();
+    if (now - (view.notifiedAt || 0) < 15000) return;
+    view.notifiedAt = now;
+    const pane = view.attach ? this.agents?.panes?.[view.attach] : null;
+    const agent = pane?.agent;
+    const n = this.shells.indexOf(view) + 1;
+    const title = `${this.server.name} · ${agent ? AGENTS[agent].label : `Terminal ${n}`}`;
+    const what = cleanTitle(pane?.title);
+    const body = agent
+      ? `${what && !/^(claude code|agy)$/i.test(what) ? `${what}: ` : ''}ish tugadi yoki ruxsat so‘rayapti`
+      : 'Terminal signal berdi';
+    call('notify', { title, body, tag: `${this.id}/${view.id}` }).catch(() => {});
+  }
+
+  clearAttention() {
+    const view = this.active;
+    if (!view?.attention || this.mode === 'files') return;
+    view.attention = false;
+    this.renderShellTabs();
+    this.updateAttention();
+  }
+
+  updateAttention() {
+    this.tab.classList.toggle('attn', this.shells.some((s) => s.attention));
+  }
+
   /* ---------------- misc ---------------- */
 
   fitActive() {
@@ -403,6 +523,7 @@ export class Session {
   }
 
   onShow() {
+    this.clearAttention();
     requestAnimationFrame(() => {
       this.fitActive();
       this.focusActive();
@@ -415,6 +536,7 @@ export class Session {
 
   async close() {
     clearInterval(this.countdown);
+    closeUsagePanel(this);
     for (const s of this.shells) {
       this.app.unregisterShell(s);
       s.dispose();

@@ -5,9 +5,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
+import '../core/agents.dart';
 import '../core/connection.dart';
 import '../core/store.dart';
 import '../theme.dart';
+import 'agents_ui.dart';
 import 'files_pane.dart';
 import 'prompts.dart';
 import 'server_form.dart';
@@ -68,6 +70,9 @@ class _SessionPageState extends State<SessionPage> {
     final term = s.tab == 0;
     showActions(context, title: s.server.name, subtitle: s.server.address, actions: [
       if (term) SheetAction('Yangi terminal', Icons.add_rounded, () => s.newShell()),
+      for (final k in Agent.values)
+        if (s.agents.has(k)) SheetAction(term ? agentLabel(k) : '${agentLabel(k)} shu papkada', agentIcon(k), () => s.launchAgent(k, dir: term ? null : s.files.cwd)),
+      if (s.agents.any) SheetAction('AI limitlari', Icons.speed_rounded, () => showAgentsSheet(context, s)),
       if (term && s.active != null) SheetAction('Terminalni yopish', Icons.close_rounded, () => s.closeShell(s.active!)),
       if (term)
         SheetAction('Shriftni kattalashtirish', Icons.text_increase_rounded, () {
@@ -103,7 +108,7 @@ class _SessionPageState extends State<SessionPage> {
   Widget build(BuildContext context) {
     final p = context.pal;
     return ListenableBuilder(
-      listenable: Listenable.merge([s, conn, store, s.files]),
+      listenable: Listenable.merge([s, conn, store, s.files, s.agents]),
       builder: (context, _) {
         final keyboard = MediaQuery.viewInsetsOf(context).bottom > 0;
         final showCurtain = !conn.everReady || conn.state == ConnState.failed;
@@ -123,6 +128,8 @@ class _SessionPageState extends State<SessionPage> {
             body: SafeArea(
               child: Column(children: [
                 _TopBar(session: s, onMenu: _menu, onUpload: () => FilesPane.upload(context, s)),
+                // Stays during a reconnect: no layout jump while the link is down.
+                if (store.settings.agentUsage && !showCurtain) AgentBar(session: s),
                 if (s.tab == 0 && !showCurtain) _ShellStrip(session: s),
                 Expanded(
                   child: Stack(children: [
@@ -141,7 +148,7 @@ class _SessionPageState extends State<SessionPage> {
                     if (showCurtain) Positioned.fill(child: _Curtain(session: s, onClose: _close, onEdit: _editServer)),
                   ]),
                 ),
-                if (keyboard && s.tab == 0 && active != null && store.settings.extraKeys) ExtraKeys(shell: active),
+                if (keyboard && s.tab == 0 && active != null && store.settings.extraKeys) ExtraKeys(shell: active, session: s),
                 if (!keyboard)
                   Container(
                     padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
@@ -224,6 +231,7 @@ class _TopBar extends StatelessWidget {
         ),
         if (session.tab == 1 && c.isReady) IconBtn(Icons.search_rounded, tip: 'Qidirish', onTap: () => FilesPane.openSearch(context, session)),
         if (session.tab == 1 && c.isReady) IconBtn(Icons.upload_rounded, tip: 'Yuklash', onTap: onUpload),
+        if (c.isReady && session.agents.any) IconBtn(Icons.auto_awesome_rounded, tip: 'AI agentlar', size: 20, onTap: () => showAgentsSheet(context, session)),
         if (session.tab == 0 && c.isReady) IconBtn(Icons.add_rounded, tip: 'Yangi terminal', size: 24, onTap: session.newShell),
         IconBtn(Icons.more_vert_rounded, tip: 'Yana', onTap: onMenu),
       ]),
@@ -260,13 +268,21 @@ class _ShellStrip extends StatelessWidget {
                   color: identical(shells[i], session.active) ? p.active : Colors.transparent,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Text('${i + 1}',
-                    style: TextStyle(
-                      fontFamily: kMono,
-                      fontWeight: FontWeight.w500,
-                      color: identical(shells[i], session.active) ? p.fg : p.fg3,
-                      decoration: shells[i].exited ? TextDecoration.lineThrough : null,
-                    )),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  if (session.agentIn(shells[i]) case final agent?) ...[
+                    Icon(agentIcon(agent), size: 13, color: identical(shells[i], session.active) ? p.fg : p.fg2),
+                    const SizedBox(width: 5),
+                  ],
+                  Text('${i + 1}',
+                      style: TextStyle(
+                        fontFamily: kMono,
+                        fontWeight: FontWeight.w500,
+                        color: identical(shells[i], session.active) ? p.fg : p.fg3,
+                        decoration: shells[i].exited ? TextDecoration.lineThrough : null,
+                      )),
+                  // Rang its bell while you were in another terminal.
+                  if (shells[i].attention) ...[const SizedBox(width: 5), Dot(p.warn, size: 6, pulse: true)],
+                ]),
               ),
             ),
           ),
