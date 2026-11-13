@@ -7,8 +7,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pult/app_state.dart';
+import 'package:pult/core/agents.dart';
 import 'package:pult/core/connection.dart';
 import 'package:pult/core/files.dart';
+import 'package:pult/core/format.dart';
 import 'package:pult/core/fsops.dart';
 import 'package:pult/ui/editor_page.dart';
 import 'package:pult/ui/files_pane.dart';
@@ -16,6 +18,7 @@ import 'package:pult/core/store.dart';
 import 'package:pult/theme.dart';
 import 'package:pult/ui/home_page.dart';
 import 'package:pult/ui/server_form.dart';
+import 'package:pult/ui/agents_ui.dart';
 import 'package:pult/ui/session_page.dart';
 
 Future<void> loadFonts() async {
@@ -103,7 +106,7 @@ void main() {
     app = AppState(store);
   });
 
-  Future<void> shoot(WidgetTester t, Widget home, String name, {Pal pal = Pal.dark, double keyboard = 0}) async {
+  Future<void> shoot(WidgetTester t, Widget home, String name, {Pal pal = Pal.dark, double keyboard = 0, String text = demoTerminal}) async {
     t.view.physicalSize = const Size(1170, 2532);
     t.view.devicePixelRatio = 3;
     t.view.padding = const FakeViewPadding(top: 141, bottom: 102);
@@ -120,7 +123,7 @@ void main() {
     }
     await t.pump(const Duration(milliseconds: 400));
     // Like a real shell: output arrives after the view has sized the terminal.
-    if (home is SessionPage) home.session.active?.terminal.write(demoTerminal);
+    if (home is SessionPage) home.session.active?.terminal.write(text);
     await t.pump(const Duration(milliseconds: 400));
     await expectLater(find.byType(MaterialApp), matchesGoldenFile('shots/$name.png'));
     await t.pumpWidget(const SizedBox()); // dispose timers
@@ -215,6 +218,68 @@ void main() {
     await t.pumpWidget(const SizedBox());
     await t.pump(const Duration(seconds: 2));
   });
+  // AI agents: Claude Code in terminal 2, agy installed, limits known.
+  Session aiSession() {
+    final s = demoSession();
+    // A fixed moment: reset times render the same on every run.
+    final now = DateTime(2026, 11, 13, 10, 0).millisecondsSinceEpoch;
+    nowMs = () => now;
+    addTearDown(() => nowMs = () => DateTime.now().millisecondsSinceEpoch);
+    s.conn.shells.add(RemoteShell(s.conn, session: 'pult-0003'));
+    s.agents
+      ..detected = true
+      ..claudePath = '/root/.local/bin/claude'
+      ..agyPath = '/root/.local/bin/agy'
+      ..bridged = true
+      ..panes = {
+        'pult-0001': const PaneAgent(null, 'bash', '/root/apps/api', 'acme-prod'),
+        'pult-0002': const PaneAgent(Agent.claude, 'claude', '/root/apps/api', '\u2733 Fix login bug'),
+        'pult-0003': const PaneAgent(Agent.agy, 'agy', '/root/apps/web', 'agy'),
+      }
+      ..agyAt = now - 20000 // fresh: the sheet does not ask agy again
+      ..agyUsage = [
+        AgyGroup('Gemini Models', [AgyBucket('5h', UsageWindow(0.29, now + 3 * 3600000)), AgyBucket('week', UsageWindow(0.08, now + 5 * 86400000))]),
+        AgyGroup('Claude and GPT models', [AgyBucket('5h', UsageWindow(0.82, now + 83 * 60000)), AgyBucket('week', UsageWindow(0.36, now + 5 * 86400000))]),
+      ];
+    s.agents.debugAddSnapshot(
+      'claude.pult-0002.json',
+      ClaudeSnapshot(t: now - 60000, session: 'pult-0002', model: 'Opus 5.5', ctx: 23, cost: 0.42, five: UsageWindow(0.41, now + 130 * 60000), week: UsageWindow(0.12, now + 3 * 86400000)),
+    );
+    s.active = s.conn.shells[1];
+    s.conn.shells[2].attention = true; // agy finished while you were here
+    return s;
+  }
+
+  const claudeScreen = '\x1b[1;32mroot@acme-prod\x1b[0m:\x1b[1;34m~/apps/api\x1b[0m\$ claude\r\n'
+      '\x1b[35m*\x1b[0m Claude Code\r\n\r\n'
+      '> login sahifasidagi xatoni tuzat\r\n\r\n'
+      '\x1b[32m\u25cf\x1b[0m src/auth/login.ts: sessiya muddati noto‘g‘ri hisoblanayotgan edi.\r\n'
+      '  Tuzatdim va test qo‘shdim: \x1b[2mtests/login.test.ts\x1b[0m\r\n\r\n'
+      '\x1b[2m────────────────────────────────────\x1b[0m\r\n'
+      '> \r\n'
+      '\x1b[2mOpus 5.5 · kontekst 23% · 5 soat 41% · hafta 12%\x1b[0m';
+
+  testWidgets('ai terminal', (t) async => shoot(t, SessionPage(app: app, session: aiSession()), 'ai-terminal', text: claudeScreen));
+  testWidgets('ai keys', (t) async => shoot(t, SessionPage(app: app, session: aiSession()), 'ai-keys', keyboard: 300, text: claudeScreen));
+  Future<void> sheet(WidgetTester t, String name, Pal pal) async {
+    final s = aiSession();
+    t.view.physicalSize = const Size(1170, 2532);
+    t.view.devicePixelRatio = 3;
+    t.view.padding = const FakeViewPadding(top: 141, bottom: 102);
+    await t.pumpWidget(MaterialApp(debugShowCheckedModeBanner: false, theme: buildTheme(pal), home: SessionPage(app: app, session: s)));
+    await t.pump(const Duration(milliseconds: 300));
+    s.active?.terminal.write(claudeScreen);
+    showAgentsSheet(t.element(find.byType(SessionPage)), s);
+    await t.pump(const Duration(milliseconds: 500));
+    await t.pump(const Duration(milliseconds: 500));
+    await expectLater(find.byType(MaterialApp), matchesGoldenFile('shots/$name.png'));
+    await t.pumpWidget(const SizedBox());
+    await t.pump(const Duration(seconds: 2));
+  }
+
+  testWidgets('ai sheet', (t) async => sheet(t, 'ai-sheet', Pal.dark));
+  testWidgets('ai sheet light', (t) async => sheet(t, 'ai-sheet-light', Pal.light));
+
   testWidgets('reconnecting', (t) async {
     final s = demoSession();
     s.conn

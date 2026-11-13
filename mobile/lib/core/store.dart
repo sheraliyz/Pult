@@ -78,16 +78,18 @@ class Server {
 }
 
 class Settings {
-  Settings({this.theme = 'system', this.fontSize = 12.5, this.extraKeys = true});
+  Settings({this.theme = 'system', this.fontSize = 12.5, this.extraKeys = true, this.agentUsage = true});
   String theme; // system | dark | light
   double fontSize;
   bool extraKeys;
+  bool agentUsage; // Claude Code / agy limits under the top bar
 
-  Map<String, dynamic> toJson() => {'theme': theme, 'fontSize': fontSize, 'extraKeys': extraKeys};
+  Map<String, dynamic> toJson() => {'theme': theme, 'fontSize': fontSize, 'extraKeys': extraKeys, 'agentUsage': agentUsage};
   factory Settings.fromJson(Map<String, dynamic> j) => Settings(
         theme: j['theme'] as String? ?? 'system',
         fontSize: (j['fontSize'] as num?)?.toDouble() ?? 12.5,
         extraKeys: j['extraKeys'] as bool? ?? true,
+        agentUsage: j['agentUsage'] as bool? ?? true,
       );
 }
 

@@ -3,12 +3,14 @@
 //   flutter test test/core_test.dart --dart-define=MOCK_ROOT=<dir>
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pult/core/agents.dart';
 import 'package:pult/core/connection.dart';
 import 'package:pult/core/files.dart';
 import 'package:pult/core/fsops.dart';
@@ -187,6 +189,68 @@ void main() {
     expect(byText.any((h) => h.path == '$play/src/a.txt' && h.line == 2 && h.text!.contains('NEEDLE')), isTrue);
     expect(uniqueName({'a.tar.gz'}, 'a.tar.gz', false), 'a (1).tar.gz');
   }, skip: const bool.fromEnvironment('MOCK_SH') ? false : 'needs the mock server with MOCK_SH (real cp/tar/find)');
+
+  test('AI agents: detection, agy usage, Claude bridge, panes', () async {
+    // The mock has a fake `claude` / `agy` (dev/mock-server.js).
+    final home = '$mockRoot/home/demo';
+    final settings = File('$home/.claude/settings.json');
+    for (final d in ['$home/.claude', '$home/.pult']) {
+      if (Directory(d).existsSync()) Directory(d).deleteSync(recursive: true);
+    }
+    settings.createSync(recursive: true);
+    const user = '{\n  "model": "opus",\n  "statusLine": { "type": "command", "command": "~/.claude/my-status.sh", "padding": 1 }\n}\n';
+    settings.writeAsStringSync(user);
+
+    final a = Agents(conn);
+    addTearDown(a.dispose);
+    await until(() => a.detected, what: 'detect');
+    expect(a.claudePath, '/home/demo/.local/bin/claude');
+    expect(a.agyPath, '/home/demo/.local/bin/agy');
+    expect(a.bridged, isFalse);
+
+    await a.refreshAgy();
+    expect(a.agyError, isNull, reason: a.agyError?.message);
+    expect(a.agyUsage!.map((g) => g.name), ['Gemini Models', 'Claude and GPT models']);
+
+    await a.installClaude();
+    final s = jsonDecode(settings.readAsStringSync()) as Map<String, dynamic>;
+    expect(s['statusLine']['command'], bridgeCommand);
+    expect(s['statusLine']['padding'], 1);
+    expect(s['model'], 'opus');
+    expect(s['preferredNotifChannel'], 'terminal_bell');
+    expect(File('$home/.pult/claude-statusline.next').readAsStringSync().trim(), '~/.claude/my-status.sh');
+    expect(File('$home/.claude/settings.json.pult-backup').readAsStringSync(), user);
+    expect(File('$home/.pult/bin/claude-statusline').readAsStringSync(), bridgeScript);
+
+    // A snapshot written by the status line reaches us through the monitor.
+    final t = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    File('$home/.pult/state/claude.pult-0009.json')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('{"t":$t,"d":{"model":{"display_name":"Opus 5.5"},"context_window":{"used_percentage":31},'
+          '"rate_limits":{"five_hour":{"used_percentage":64,"resets_at":${t + 3600}},"seven_day":{"used_percentage":20,"resets_at":${t + 86400}}}}}\n');
+    await until(() => a.claudeUsage != null, what: 'usage snapshot');
+    expect(a.claudeUsage!.five!.used, closeTo(0.64, 1e-9));
+    expect(a.claudeSessions['pult-0009']!.ctx, 31);
+
+    // A terminal that starts claude is recognised.
+    final sh = await conn.openShell();
+    await until(() => a.panes.containsKey(sh.session), what: 'pane listed');
+    sh.write('claude\r');
+    await until(() => a.panes[sh.session]?.agent == Agent.claude, what: 'claude pane');
+    sh.newline(); // LF reaches the agent as "new line", not Enter
+    sh.write('/exit\r');
+    await until(() => a.panes[sh.session]?.agent == null, what: 'claude exited');
+    await conn.closeShell(sh);
+
+    await a.removeClaude();
+    expect(jsonDecode(settings.readAsStringSync()), jsonDecode(user));
+    expect(File('$home/.pult/bin/claude-statusline').existsSync(), isFalse);
+    expect(File('$home/.pult/state/claude.pult-0009.json').existsSync(), isFalse);
+
+    settings.writeAsStringSync('{ "model": "opus", }');
+    await expectLater(a.installClaude(), throwsA(isA<ConnError>()));
+    expect(settings.readAsStringSync(), '{ "model": "opus", }');
+  }, timeout: const Timeout(Duration(minutes: 1)));
 
   test('generated ed25519 key parses and matches its public line', () {
     final k = generateEd25519();

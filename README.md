@@ -156,6 +156,10 @@ Play Protect ogohlantirsa: **Baribir o‘rnatish**.
 - Serverdagi dasturlar (Claude CLI, tmux, vim) nusxalagan matn telefon buferiga tushadi.
 - Fayllarda: nusxalash/kesib olish/qo‘yish, dublikat, arxivlash va arxivni ochish, qidiruv, xususiyatlar.
 - Muharrir: kod ranglari, qator raqamlari, qidirish va almashtirish, qatorga o‘tish, bekor qilish/qaytarish.
+- **AI agentlar:** yuqori panel ostida Claude Code va agy limitlari (5 soatlik va haftalik); ✨ tugmasi —
+  Claude Code yoki agy ni yangi terminalda ochish (**oxirgi suhbat** ham), limitlar tafsiloti va Claude limitlarini ulash/uzish.
+  Terminal yorlig‘ida agent belgisi, boshqa terminalda signal bo‘lsa — nuqta. Agent ishlayotganda qo‘shimcha
+  tugmalarda `↵` (yangi qator, yubormasdan) va `📎` (rasm yoki faylni serverga yuborib, yo‘lini yozish).
 
 **Telefonga xos:**
 - Klaviatura ustida qo‘shimcha tugmalar: `Esc` `Tab` `Ctrl` `Alt` `← ↓ ↑ →` `- / | ~` `Home` `End` `PgUp` `PgDn`, qo‘yish.
@@ -202,6 +206,7 @@ Telefon versiyasi (`mobile/`, Flutter):
 
 ```bash
 flutter test test/core_test.dart --dart-define=MOCK_ROOT=<mock papka>   # SSH yadrosi testlari (mock server kerak)
+flutter test test/agents_test.dart                                       # AI agentlar: limitlarni o‘qish, skript desktop bilan bir xil
 flutter test test/screens_test.dart --update-goldens                    # ekran rasmlari: test/shots
 flutter build apk --release --target-platform android-arm,android-arm64
 ```

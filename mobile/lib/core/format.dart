@@ -2,6 +2,11 @@
 
 const _months = ['yan', 'fev', 'mar', 'apr', 'may', 'iyun', 'iyul', 'avg', 'sen', 'okt', 'noy', 'dek'];
 
+/// The clock the formatters and usage windows read (epoch ms); screenshot
+/// tests pin it so "resets at 14:30" renders the same on every run.
+int Function() nowMs = () => DateTime.now().millisecondsSinceEpoch;
+DateTime _now() => DateTime.fromMillisecondsSinceEpoch(nowMs());
+
 String _pad(int n) => n.toString().padLeft(2, '0');
 
 String fmtBytes(num? n) {
@@ -20,7 +25,7 @@ String fmtBytes(num? n) {
 String fmtDate(int? sec) {
   if (sec == null || sec == 0) return '—';
   final d = DateTime.fromMillisecondsSinceEpoch(sec * 1000);
-  final now = DateTime.now();
+  final now = _now();
   final time = '${_pad(d.hour)}:${_pad(d.minute)}';
   bool same(DateTime a, DateTime b) => a.year == b.year && a.month == b.month && a.day == b.day;
   if (same(d, now)) return 'bugun, $time';
@@ -31,7 +36,7 @@ String fmtDate(int? sec) {
 
 String fmtAgo(int? ms) {
   if (ms == null || ms == 0) return 'hali ulanilmagan';
-  final s = (DateTime.now().millisecondsSinceEpoch - ms) ~/ 1000;
+  final s = (nowMs() - ms) ~/ 1000;
   if (s < 60) return 'hozirgina';
   if (s < 3600) return '${s ~/ 60} daqiqa oldin';
   if (s < 86400) return '${s ~/ 3600} soat oldin';
@@ -61,6 +66,32 @@ String fmtMode(int mode, {bool dir = false, bool link = false}) {
 String fmtOctal(int mode) => (mode & 0xFFF).toRadixString(8).padLeft(3, '0');
 
 String fmtSpeed(double bps) => bps > 0 ? '${fmtBytes(bps.round())}/s' : '';
+
+/// Time left until a moment (ms): "2 soat 10 daq", "3 kun 4 soat", "40 daq".
+String fmtUntil(int ms) {
+  final s = ((ms - nowMs()) / 1000).round().clamp(0, 1 << 31);
+  final d = s ~/ 86400, h = (s % 86400) ~/ 3600, m = (s % 3600) ~/ 60;
+  if (d > 0) return h > 0 ? '$d kun $h soat' : '$d kun';
+  if (h > 0) return m > 0 ? '$h soat $m daq' : '$h soat';
+  return '${m.clamp(1, 59)} daq';
+}
+
+const _weekdays = ['Du', 'Se', 'Ch', 'Pa', 'Ju', 'Sh', 'Ya']; // DateTime.weekday 1..7
+
+/// A moment in the near future (ms): "14:30", "ertaga 09:00", "Pa 09:00", "18-noy 09:00".
+String fmtWhen(int ms) {
+  final d = DateTime.fromMillisecondsSinceEpoch(ms);
+  final now = _now();
+  final time = '${_pad(d.hour)}:${_pad(d.minute)}';
+  bool same(DateTime a, DateTime b) => a.year == b.year && a.month == b.month && a.day == b.day;
+  if (same(d, now)) return time;
+  if (same(d, now.add(const Duration(days: 1)))) return 'ertaga $time';
+  if (d.isAfter(now) && d.difference(now).inDays < 6) return '${_weekdays[d.weekday - 1]} $time';
+  return '${d.day}-${_months[d.month - 1]} $time';
+}
+
+/// A path as one shell word (quoted only when it has to be).
+String pathArg(String p) => RegExp(r'^[\w@%+=:,./-]+$').hasMatch(p) ? p : shq(p);
 
 /* ---------------- posix paths ---------------- */
 
