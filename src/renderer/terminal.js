@@ -6,9 +6,10 @@ import { WebglAddon } from '../../node_modules/@xterm/addon-webgl/lib/addon-webg
 import { SearchAddon } from '../../node_modules/@xterm/addon-search/lib/addon-search.mjs';
 import { Unicode11Addon } from '../../node_modules/@xterm/addon-unicode11/lib/addon-unicode11.mjs';
 import { WebLinksAddon } from '../../node_modules/@xterm/addon-web-links/lib/addon-web-links.mjs';
-import { call, send } from './api.js';
-import { h, icon } from './dom.js';
-import { toast } from './ui.js';
+import { call, send, pathForFile } from './api.js';
+import { h, icon, posix } from './dom.js';
+import { toast, busy } from './ui.js';
+import { pathArg } from './agents.js';
 
 const THEMES = {
   dark: {
@@ -89,6 +90,8 @@ export class TermView {
     this.pendingAck = 0;
     this.ackTimer = null;
     this.title = '';
+    this.attention = false; // rang its bell while you were elsewhere
+    this.notifiedAt = 0;
 
     this.host = h('div', { class: 'term-host' });
     this.surface = h('div', { class: 'term-surface' });
@@ -140,6 +143,8 @@ export class TermView {
     this.term.attachCustomKeyEventHandler((e) => this.onKey(e));
     // OSC 52: programs (tmux, vim, Claude Code…) put text on the Windows clipboard.
     this.term.parser.registerOscHandler(52, (data) => this.onOsc52(data));
+    // Claude Code (and others) ring the bell when done or waiting for you.
+    this.term.onBell(() => this.session.onBell(this));
 
     this.surface.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -151,9 +156,12 @@ export class TermView {
         this.paste();
       }
     });
+    // Capture phase: decide before xterm's own paste handler (text only).
+    this.surface.addEventListener('paste', (e) => this.onPasteEvent(e), true);
 
     this.buildSearch();
     this.buildExitOverlay();
+    this.buildDrop();
   }
 
   /* ---------------- lifecycle ---------------- */
@@ -253,7 +261,57 @@ export class TermView {
   async paste() {
     const text = await call('clip:read');
     if (text) this.term.paste(text);
+    else if (await call('clip:hasImage').catch(() => false)) await this.pasteImage();
     this.term.focus();
+  }
+
+  // Ctrl+V with a screenshot or copied files instead of text: the program on
+  // the server cannot see this computer's clipboard, so send them over and
+  // type their paths (Claude Code and agy attach images given by path).
+  onPasteEvent(e) {
+    const dt = e.clipboardData;
+    if (!dt || dt.getData('text/plain')) return;
+    const paths = [...(dt.files || [])].map((f) => pathForFile(f)).filter(Boolean);
+    const image = [...(dt.items || [])].some((i) => i.kind === 'file' && i.type.startsWith('image/'));
+    if (!paths.length && !image) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (paths.length) this.sendFiles(paths);
+    else this.pasteImage();
+  }
+
+  async pasteImage() {
+    if (this.exited || this.session.state.state !== 'ready') return;
+    const done = busy('Rasm serverga yuborilmoqda…');
+    try {
+      const remote = await call('term:pasteImage', this.session.id);
+      if (!remote) return;
+      this.term.paste(`${pathArg(remote)} `);
+      toast(`Rasm serverda: ${remote}`, 'ok', 2500);
+    } catch (err) {
+      toast(`Rasmni yuborib bo‘lmadi: ${err.message}`, 'err', 5000);
+    } finally {
+      done();
+      this.term.focus();
+    }
+  }
+
+  /** Upload local files to ~/.pult/uploads/<time>/ and type their remote paths. */
+  async sendFiles(paths) {
+    if (!paths.length || this.exited || this.session.state.state !== 'ready') return;
+    try {
+      const dir = await call('term:uploadDir', this.session.id);
+      const jobId = await call('xfer:upload', this.session.id, paths, dir, { quiet: true });
+      const remote = paths.map((p) => posix.join(dir, p.split(/[\\/]/).pop()));
+      this.session.app.whenUploaded(jobId, () => {
+        if (this.exited) return;
+        this.term.paste(`${remote.map(pathArg).join(' ')} `);
+        toast(remote.length === 1 ? `Serverga yuklandi: ${remote[0]}` : `${remote.length} ta fayl serverga yuklandi`, 'ok', 2500);
+        this.term.focus();
+      });
+    } catch (err) {
+      toast(err.message, 'err', 5000);
+    }
   }
 
   // "52;c;<base64>" — write only. Reading ("?") is refused: a remote program
@@ -284,6 +342,13 @@ export class TermView {
 
   onKey(e) {
     if (e.type !== 'keydown') return true;
+    // Shift+Enter: a new line in Claude Code / agy (they read LF, i.e. Ctrl+J,
+    // as "newline"); shells treat LF like Enter, so nothing else changes.
+    if (e.key === 'Enter' && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && this.settings.shiftEnterNewline !== false) {
+      e.preventDefault();
+      this.write('\n');
+      return false;
+    }
     const ctrl = e.ctrlKey && !e.altKey && !e.metaKey;
     if (ctrl && e.shiftKey && e.code === 'KeyC') {
       e.preventDefault();
@@ -357,6 +422,38 @@ export class TermView {
     this.searchBox.hidden = true;
     this.search.clearDecorations();
     this.term.focus();
+  }
+
+  /* ---------------- drop files on the terminal ---------------- */
+
+  buildDrop() {
+    const hint = h('div', { class: 'term-drop' }, h('div', { class: 'f-drop-card' }, icon('upload', 22), h('div', { class: 'f-drop-text' }, 'Serverga yuklash va yo‘lini yozish')));
+    this.host.append(hint);
+    const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+    let depth = 0;
+    this.host.addEventListener('dragenter', (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth += 1;
+      this.host.classList.add('dropping');
+    });
+    this.host.addEventListener('dragover', (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    });
+    this.host.addEventListener('dragleave', () => {
+      depth = Math.max(0, depth - 1);
+      if (!depth) this.host.classList.remove('dropping');
+    });
+    this.host.addEventListener('drop', (e) => {
+      depth = 0;
+      this.host.classList.remove('dropping');
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.sendFiles([...e.dataTransfer.files].map((f) => pathForFile(f)).filter(Boolean));
+    });
   }
 
   /* ---------------- exit overlay ---------------- */

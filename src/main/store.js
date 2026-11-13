@@ -175,6 +175,12 @@ const DEFAULT_SETTINGS = {
   copyOnSelect: false,
   scrollback: 10000,
   downloadDir: '',
+  // AI agents (Claude Code, agy)
+  agentUsage: true,
+  agentNotify: true,
+  shiftEnterNewline: true,
+  claudeCmd: 'claude',
+  agyCmd: 'agy',
 };
 
 let settings = null;

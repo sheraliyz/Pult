@@ -5,6 +5,7 @@ import { h, icon, clear, fmt, posix } from './dom.js';
 import { menu, toast, confirmDialog, inputDialog, modal, busy, segmented, field } from './ui.js';
 import { openEditor } from './editor.js';
 import { kindOf, kindIcon, KIND_LABEL } from './filekinds.js';
+import { agentMenuItems } from './agents.js';
 
 const COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
@@ -524,6 +525,7 @@ export class FilesView {
       single && isDir && { label: 'Ochish', icon: 'folder', hint: 'Enter', onClick: () => this.open(single) },
       single && !isDir && !binary && { label: 'Tahrirlash', icon: 'pencil', hint: 'Enter', onClick: () => this.edit(single) },
       single && isDir && { label: 'Terminalda ochish', icon: 'terminal', onClick: () => this.session.cdInTerminal(posix.join(this.cwd, single.name)) },
+      ...(single && isDir ? agentMenuItems(this.session, { dir: posix.join(this.cwd, single.name) }) : []),
       archive && { label: 'Shu yerga ochish', icon: 'unarchive', onClick: () => this.extract(single, 'here') },
       archive && { label: `“${single.name.replace(ARCHIVE_RE, '')}/” papkasiga ochish`, icon: 'unarchive', onClick: () => this.extract(single, 'folder') },
       '-',
@@ -556,6 +558,7 @@ export class FilesView {
       { label: 'Shu papkada qidirish', icon: 'search', hint: 'Ctrl+Shift+F', onClick: () => this.openSearch() },
       { label: 'Papka xususiyatlari', icon: 'info', onClick: () => this.properties(null) },
       { label: 'Terminalda ochish', icon: 'terminal', onClick: () => this.session.cdInTerminal(this.cwd) },
+      ...agentMenuItems(this.session, { dir: this.cwd }),
       { label: 'Yo‘lni nusxalash', icon: 'copy', onClick: () => call('clip:write', this.cwd) },
       { label: this.showHidden ? 'Yashirin fayllarni berkitish' : 'Yashirin fayllarni ko‘rsatish', icon: this.showHidden ? 'eyeOff' : 'eye', hint: 'Ctrl+Shift+.', onClick: () => this.toggleHidden() },
       { label: 'Yangilash', icon: 'refresh', hint: 'F5', onClick: () => this.refresh() },

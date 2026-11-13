@@ -11,12 +11,14 @@ const {
   powerMonitor,
   nativeTheme,
   Menu,
+  Notification,
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const store = require('./store');
 const { Connection } = require('./connection');
 const { TransferManager } = require('./transfers');
+const { AgentWatch, stamp } = require('./agents');
 const fsops = require('./fsops');
 
 const ROOT = path.join(__dirname, '..', '..');
@@ -49,6 +51,7 @@ if (!app.requestSingleInstanceLock()) {
 
 let win = null;
 const connections = new Map();
+const agentWatches = new Map();
 const transfers = new TransferManager((id) => connections.get(id));
 
 const send = (channel, ...args) => {
@@ -147,6 +150,8 @@ function createWindow() {
     store.setWindowState({ ...bounds, maximized: win.isMaximized() });
   });
 
+  win.on('focus', () => win.flashFrame(false));
+
   win.on('closed', () => {
     win = null;
   });
@@ -235,6 +240,34 @@ handle('settings:set', (patch) => {
 
 handle('clip:read', () => clipboard.readText());
 handle('clip:write', (text) => clipboard.writeText(String(text)));
+handle('clip:hasImage', async () => {
+  try {
+    return clipboard.readImage ? !clipboard.readImage().isEmpty() : await clipboard.has('image/png');
+  } catch {
+    return false;
+  }
+});
+
+/** The clipboard image as PNG bytes, or null (Electron's async clipboard API). */
+async function clipboardPng() {
+  if (clipboard.readImage) {
+    const img = clipboard.readImage();
+    return img.isEmpty() ? null : img.toPNG();
+  }
+  let items = [];
+  try {
+    items = await clipboard.read();
+  } catch {
+    return null;
+  }
+  for (const item of items) {
+    const type = item.types.find((t) => t === 'image/png') || item.types.find((t) => t.startsWith('image/'));
+    if (!type) continue;
+    const blob = await item.getType(type);
+    if (blob && typeof blob.arrayBuffer === 'function') return Buffer.from(await blob.arrayBuffer());
+  }
+  return null;
+}
 handle('open:external', (url) => {
   if (/^https?:\/\//i.test(url)) shell.openExternal(url);
 });
@@ -283,9 +316,16 @@ handle('conn:open', async (connId, serverId) => {
   if (!server) throw new Error('Server topilmadi');
   const c = new Connection(connId, server, { ask, store });
   connections.set(connId, c);
+  const agents = new AgentWatch(c);
+  agentWatches.set(connId, agents);
+  agents.on('update', (s) => send('agents', connId, s));
   c.on('state', (s) => {
     send('conn:state', connId, s);
-    if (s.state === 'closed') connections.delete(connId);
+    if (s.state === 'closed') {
+      connections.delete(connId);
+      agents.dispose();
+      agentWatches.delete(connId);
+    }
   });
   c.on('stats', (s) => send('conn:stats', connId, s));
   c.on('shell:data', (shellId, data) => send('shell:data', shellId, data));
@@ -436,7 +476,7 @@ handle('sftp:writeText', async (connId, p, text) => {
 
 /* ---------------- IPC: transfers ---------------- */
 
-handle('xfer:upload', (connId, localPaths, remoteDir) => transfers.upload(connId, localPaths, remoteDir));
+handle('xfer:upload', (connId, localPaths, remoteDir, opts) => transfers.upload(connId, localPaths, remoteDir, opts || {}));
 handle('xfer:download', (connId, remotePaths, localDir) => transfers.download(connId, remotePaths, localDir || downloadDir()));
 handle('xfer:cancel', (id) => transfers.cancel(id));
 handle('xfer:clear', () => transfers.clearFinished());
@@ -445,6 +485,57 @@ handle('xfer:list', () => transfers.list());
 transfers.on('update', (job) => send('xfer:update', job));
 transfers.on('done', (job) => send('xfer:done', job));
 transfers.on('cleared', () => send('xfer:cleared', transfers.list()));
+
+/* ---------------- IPC: AI agents (Claude Code, agy) ---------------- */
+
+function agentsOf(connId) {
+  const a = agentWatches.get(connId);
+  if (!a) throw new Error('Ulanish topilmadi');
+  return a;
+}
+
+handle('agents:get', (connId) => agentsOf(connId).publicState());
+handle('agents:detect', async (connId) => {
+  await agentsOf(connId).detect();
+  return agentsOf(connId).publicState();
+});
+handle('agents:installClaude', (connId) => agentsOf(connId).installClaude());
+handle('agents:removeClaude', (connId) => agentsOf(connId).removeClaude());
+handle('agents:refreshAgy', (connId) => agentsOf(connId).refreshAgy());
+
+// A screenshot on the clipboard, pasted into a terminal: the remote program
+// cannot read this computer's clipboard, so the image goes to the server and
+// the terminal gets its path. Returns null when there is no image.
+handle('term:pasteImage', async (connId) => {
+  const png = await clipboardPng();
+  if (!png) return null;
+  return agentsOf(connId).saveUpload(`paste-${stamp()}.png`, png);
+});
+handle('term:uploadDir', (connId) => agentsOf(connId).uploadDir());
+
+// Desktop notification (e.g. Claude finished or asks for permission in a
+// terminal you are not looking at). Clicking it brings that terminal back.
+let notifySeq = 0;
+const notices = new Map();
+handle('notify', ({ title, body, tag }) => {
+  if (!Notification.isSupported()) return false;
+  const n = new Notification({ title: String(title || 'Pult'), body: String(body || ''), silent: false });
+  const id = ++notifySeq;
+  notices.set(id, n); // keep a reference so the click handler survives GC
+  n.on('click', () => {
+    if (win && !win.isDestroyed()) {
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+    }
+    send('notify:click', tag);
+  });
+  n.on('close', () => notices.delete(id));
+  n.show();
+  if (notices.size > 20) notices.delete(notices.keys().next().value);
+  if (win && !win.isDestroyed() && !win.isFocused()) win.flashFrame(true);
+  return true;
+});
 
 /* ---------------- app lifecycle ---------------- */
 

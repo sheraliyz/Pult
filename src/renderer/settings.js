@@ -60,9 +60,20 @@ export async function openSettings(app) {
 
   const row = (label, control) => h('div', { class: 'set-row' }, h('div', { class: 'set-label' }, label), control);
 
+  // AI agents on the server (Claude Code, agy).
+  const usage = toggleRow('Limitlarni ko‘rsatish', 'Claude Code va agy obuna limitlari (5 soatlik, haftalik) holat qatorida turadi.', s.agentUsage !== false, (v) => set({ agentUsage: v }));
+  const notify = toggleRow('Bildirishnomalar', 'Boshqa oynada bo‘lsangiz, agent ishni tugatganda yoki ruxsat so‘raganda xabar chiqadi.', s.agentNotify !== false, (v) => set({ agentNotify: v }));
+  const newline = toggleRow('Shift+Enter — yangi qator', 'Claude Code va agy’da xabarni yubormasdan keyingi qatorga o‘tadi.', s.shiftEnterNewline !== false, (v) => set({ shiftEnterNewline: v }));
+  const cmdInput = (key, fallback) => {
+    const input = h('input', { class: 'input mono set-cmd', value: s[key] || fallback, placeholder: fallback, spellcheck: 'false' });
+    input.addEventListener('change', () => set({ [key]: input.value.trim() || fallback }));
+    return input;
+  };
+
   const body = h(
     'div',
-    { class: 'settings' },
+    // Focus lands here, not in the first text field (the agent commands).
+    { class: 'settings', tabindex: '-1', autofocus: true },
     h('div', { class: 'set-group' }, h('div', { class: 'set-title' }, 'Ko‘rinish'), row('Mavzu', theme.el)),
     h(
       'div',
@@ -74,6 +85,16 @@ export async function openSettings(app) {
       copySel.el,
     ),
     h('div', { class: 'set-group' }, h('div', { class: 'set-title' }, 'Fayllar'), row('Yuklab olish', h('div', { class: 'dir-row' }, dirLabel, pickDir))),
+    h(
+      'div',
+      { class: 'set-group' },
+      h('div', { class: 'set-title' }, 'AI agentlar (Claude Code, agy)'),
+      usage.el,
+      notify.el,
+      newline.el,
+      row('Claude buyrug‘i', cmdInput('claudeCmd', 'claude')),
+      row('agy buyrug‘i', cmdInput('agyCmd', 'agy')),
+    ),
     h(
       'div',
       { class: 'set-about' },

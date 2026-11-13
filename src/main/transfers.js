@@ -101,12 +101,15 @@ class TransferManager extends EventEmitter {
       speed: job.speed,
       target: job.target,
       remoteDir: job.remoteDir,
+      quiet: !!job.quiet,
     };
   }
 
-  upload(connId, localPaths, remoteDir) {
+  // quiet: files handed to a terminal (agent) — progress stays in the status
+  // bar chip instead of popping the panel open.
+  upload(connId, localPaths, remoteDir, { quiet = false } = {}) {
     const name = localPaths.length === 1 ? path.basename(localPaths[0]) : `${localPaths.length} ta element`;
-    return this.add({ kind: 'upload', connId, name, localPaths, remoteDir, target: remoteDir });
+    return this.add({ kind: 'upload', connId, name, localPaths, remoteDir, target: remoteDir, quiet });
   }
 
   download(connId, remotePaths, localDir) {

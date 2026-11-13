@@ -65,6 +65,8 @@ function tmuxScript(name, cols, rows) {
 }
 
 // Long-lived helper channel: answers pings (for latency) and reports load.
+// "a" lists what runs in each Pult terminal (for AI agents: Claude Code, agy)
+// plus checksums of ~/.pult/state/*.json; "g <file>" returns one of those files.
 const MONITOR_SCRIPT = [
   'while IFS= read -r l; do case "$l" in',
   'p) echo p;;',
@@ -73,6 +75,10 @@ const MONITOR_SCRIPT = [
   'echo "disk $(df -Pk / 2>/dev/null | tail -n 1)";',
   'read -r up idle < /proc/uptime; echo "up $up";',
   'echo end;;',
+  // -u: titles keep their UTF-8 (Claude Code puts a glyph in front).
+  'a) tmux -u -L pult list-panes -a -F "ap|::|#{session_name}|::|#{pane_current_command}|::|#{pane_current_path}|::|#{pane_title}" 2>/dev/null;',
+  'for f in "$HOME"/.pult/state/*.json; do [ -f "$f" ] && echo "af $(cksum < "$f") $f"; done; echo aend;;',
+  'g\\ *) echo gb; cat -- "${l#g }" 2>/dev/null; echo; echo ge;;',
   'esac; done',
 ].join(' ');
 
@@ -143,6 +149,11 @@ class Connection extends EventEmitter {
     this.rtt = null;
     this.cpuPrev = null;
     this.stats = {};
+    // AI agents (see agents.js): poll panes + state files on every tick.
+    this.agentPolling = false;
+    this.agentScan = null;
+    this.fetches = [];
+    this.fetchBuf = null;
 
     this.waiters = [];
   }
@@ -665,6 +676,8 @@ class Connection extends EventEmitter {
     client.exec(`sh -c ${shq(MONITOR_SCRIPT)}`, (err, stream) => {
       if (err || this.client !== client) return;
       this.monitor = stream;
+      // Titles and JSON carry UTF-8: never split a character between chunks.
+      stream.setEncoding('utf8');
       let buf = '';
       stream.on('data', (d) => {
         buf += d;
@@ -677,7 +690,10 @@ class Connection extends EventEmitter {
       });
       stream.stderr.on('data', () => {});
       stream.on('close', () => {
-        if (this.monitor === stream) this.monitor = null;
+        if (this.monitor !== stream) return;
+        this.monitor = null;
+        this.fetchBuf = null;
+        for (const f of this.fetches.splice(0)) f(null);
       });
       this.tick();
     });
@@ -691,6 +707,9 @@ class Connection extends EventEmitter {
       this.monitor.close();
       this.monitor = null;
     }
+    this.agentScan = null;
+    this.fetchBuf = null;
+    for (const f of this.fetches.splice(0)) f(null);
   }
 
   ping() {
@@ -703,9 +722,50 @@ class Connection extends EventEmitter {
     if (!this.monitor?.writable) return;
     this.ping();
     this.monitor.write('s\n');
+    if (this.agentPolling) this.monitor.write('a\n');
+  }
+
+  /** Read a small text file through the monitor channel (no new SSH channel). */
+  monitorFetch(file) {
+    if (!this.monitor?.writable || /[\r\n]/.test(file)) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      this.fetches.push(resolve);
+      this.monitor.write(`g ${file}\n`);
+    });
   }
 
   onMonitorLine(line) {
+    // Inside a "g" reply every line is file content until "ge".
+    if (this.fetchBuf) {
+      if (line === 'ge') {
+        const text = this.fetchBuf.join('\n');
+        this.fetchBuf = null;
+        this.fetches.shift()?.(text);
+      } else {
+        this.fetchBuf.push(line);
+      }
+      return;
+    }
+    if (line === 'gb') {
+      this.fetchBuf = [];
+      return;
+    }
+    if (line.startsWith('ap|::|')) {
+      const [, session, command, cwd, ...title] = line.split('|::|');
+      (this.agentScan ??= { panes: [], files: [] }).panes.push({ session, command, cwd, title: title.join('|::|') });
+      return;
+    }
+    if (line.startsWith('af ')) {
+      // "af <crc> <size> <path>"
+      const m = line.match(/^af (\d+) (\d+) (.+)$/);
+      if (m) (this.agentScan ??= { panes: [], files: [] }).files.push({ sum: `${m[1]}:${m[2]}`, path: m[3] });
+      return;
+    }
+    if (line === 'aend') {
+      this.emit('agents:scan', this.agentScan || { panes: [], files: [] });
+      this.agentScan = null;
+      return;
+    }
     const [kind, ...rest] = line.trim().split(/\s+/);
     const nums = rest.map(Number);
     switch (kind) {

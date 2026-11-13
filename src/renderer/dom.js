@@ -81,6 +81,12 @@ const PATHS = {
   unarchive: '<rect x="3.5" y="4.5" width="17" height="4.5" rx="1.2"/><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9"/><path d="M12 18.5v-6M9.5 15l2.5-2.5 2.5 2.5"/>',
   info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.8h.01"/>',
   duplicate: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5v-2a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/><path d="M14 11.5v5M11.5 14h5"/>',
+  spark: '<path d="M10 4.5l1.5 4 4 1.5-4 1.5-1.5 4-1.5-4-4-1.5 4-1.5z"/><path d="M17 14l.8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7-1.7-.8 1.7-.8z"/>',
+  claude: '<path d="M12 4.5v15M4.5 12h15M6.7 6.7l10.6 10.6M17.3 6.7L6.7 17.3"/>',
+  agy: '<path d="M12 4.5l6.5 14.5L12 15.5 5.5 19z"/>',
+  bell: '<path d="M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 1.5H5z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
+  gauge: '<path d="M4.5 16.5a7.5 7.5 0 1 1 15 0"/><path d="M12 16.5l3.5-4.5"/>',
+  resume: '<path d="M5 12a7 7 0 1 0 2.1-5"/><path d="M4.5 4.5v4h4"/><path d="M10.5 9.5l4 2.5-4 2.5z"/>',
 };
 
 const tpl = document.createElement('template');
@@ -157,7 +163,34 @@ export const fmt = {
   speed(bps) {
     return bps ? `${fmt.bytes(Math.round(bps))}/s` : '';
   },
+
+  /** Time left until a moment: "2 soat 10 daq", "3 kun 4 soat", "40 daq". */
+  until(ms) {
+    const s = Math.max(0, Math.round((ms - Date.now()) / 1000));
+    const d = Math.floor(s / 86400);
+    const hrs = Math.floor((s % 86400) / 3600);
+    const min = Math.floor((s % 3600) / 60);
+    if (d > 0) return hrs ? `${d} kun ${hrs} soat` : `${d} kun`;
+    if (hrs > 0) return min ? `${hrs} soat ${min} daq` : `${hrs} soat`;
+    return `${Math.max(1, min)} daq`;
+  },
+
+  /** A moment in the near future: "14:30", "ertaga 09:00", "Pa 09:00", "18-noy 09:00". */
+  when(ms) {
+    if (!ms) return '—';
+    const d = new Date(ms);
+    const now = new Date();
+    const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    if (d.toDateString() === now.toDateString()) return time;
+    const t = new Date(now);
+    t.setDate(now.getDate() + 1);
+    if (d.toDateString() === t.toDateString()) return `ertaga ${time}`;
+    if (d - now < 6 * 86400e3 && d > now) return `${WEEKDAYS[d.getDay()]} ${time}`;
+    return `${d.getDate()}-${MONTHS[d.getMonth()]} ${time}`;
+  },
 };
+
+const WEEKDAYS = ['Ya', 'Du', 'Se', 'Ch', 'Pa', 'Ju', 'Sh'];
 
 export const debounce = (fn, ms) => {
   let t;

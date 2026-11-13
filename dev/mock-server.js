@@ -201,18 +201,135 @@ function serveSftp(sftp) {
   sftp.on('FSETSTAT', simple(() => {}));
 }
 
+/* ---------------- AI agents (fake Claude Code / agy) ---------------- */
+
+// What runs in each "tmux" session, for the monitor's pane listing.
+const panes = new Map(); // session → { command, cwd, title }
+const AGENTS_OFF = process.env.MOCK_AGENTS === 'none';
+const usage = { five: 38.4, week: 12.2, fiveReset: Date.now() + 2.2 * 3600e3, weekReset: Date.now() + 3.4 * 86400e3 };
+
+const bridged = () => {
+  try {
+    return fs.readFileSync(local(`${HOME}/.claude/settings.json`), 'utf8').includes('pult/bin/claude-statusline');
+  } catch {
+    return false;
+  }
+};
+
+// What Pult's status line bridge would write when Claude Code runs it.
+function claudeSnapshot(session, cwd, ctx) {
+  if (!bridged()) return null;
+  const d = {
+    model: { id: 'claude-opus-5-5', display_name: 'Opus 5.5' },
+    workspace: { current_dir: cwd, project_dir: cwd },
+    version: '2.1.300',
+    cost: { total_cost_usd: 0.18 + ctx / 40 },
+    context_window: { context_window_size: 200000, used_percentage: ctx, remaining_percentage: 100 - ctx },
+    rate_limits: {
+      five_hour: { used_percentage: usage.five, resets_at: Math.floor(usage.fiveReset / 1000) },
+      seven_day: { used_percentage: usage.week, resets_at: Math.floor(usage.weekReset / 1000) },
+    },
+  };
+  const dir = local(`${HOME}/.pult/state`);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `claude.${session || 'none'}.json`), JSON.stringify({ t: Math.floor(Date.now() / 1000), d }) + '\n');
+  return d;
+}
+
+const statusLine = (d) =>
+  d ? `Opus 5.5 · kontekst ${d.context_window.used_percentage}% · 5 soat ${Math.floor(usage.five)}% · hafta ${Math.floor(usage.week)}%` : '';
+
+function agyUsage() {
+  const iso = (ms) => new Date(ms).toISOString().replace(/\.\d+Z$/, 'Z');
+  return JSON.stringify({
+    num_turns: 0,
+    total_tokens: 0,
+    conversation_id: '',
+    command: {
+      name: 'usage',
+      data: {
+        groups: [
+          { name: 'Gemini Models', buckets: [
+            { id: 'gemini-5h', window: '5h', remaining_fraction: 0.714, reset_time: iso(Date.now() + 3.1 * 3600e3) },
+            { id: 'gemini-weekly', window: 'weekly', remaining_fraction: 0.917, reset_time: iso(Date.now() + 5.2 * 86400e3) },
+          ] },
+          { name: 'Claude and GPT models', buckets: [
+            { id: 'cg-5h', window: '5h', remaining_fraction: 0.18, reset_time: iso(Date.now() + 1.4 * 3600e3) },
+            { id: 'cg-weekly', window: 'weekly', remaining_fraction: 0.64, reset_time: iso(Date.now() + 5.2 * 86400e3) },
+          ] },
+        ],
+      },
+    },
+  });
+}
+
 /* ---------------- toy shell ---------------- */
 
 const C = { g: '\x1b[1;32m', b: '\x1b[1;34m', c: '\x1b[36m', y: '\x1b[33m', d: '\x1b[2m', r: '\x1b[0m', m: '\x1b[35m' };
 
-function runShell(stream, client) {
+function runShell(stream, client, session = null) {
   let cwd = HOME;
   let line = '';
+  let agent = null; // 'claude' | 'agy' while a fake agent "runs"
+  let ctx = 6;
+  const pane = { command: 'bash', cwd, title: 'acme-prod' };
+  if (session) panes.set(session, pane);
+  stream.on('close', () => {
+    if (session && panes.get(session) === pane) panes.delete(session);
+  });
+  const setPane = (command, title) => {
+    pane.command = command;
+    pane.title = title;
+    pane.cwd = cwd;
+  };
   const prompt = () => {
+    if (agent) {
+      stream.write(`\r\n${C.d}────────────────────────────────────────────────────────${C.r}\r\n> `);
+      return;
+    }
     const p = cwd === HOME ? '~' : cwd.startsWith(HOME) ? `~${cwd.slice(HOME.length)}` : cwd;
     stream.write(`${C.g}demo@acme-prod${C.r}:${C.b}${p}${C.r}$ `);
   };
   const out = (s) => stream.write(s.replace(/\n/g, '\r\n'));
+  const enterAgent = (kind) => {
+    if (AGENTS_OFF) return out(`${kind}: command not found\n`);
+    agent = kind;
+    if (kind === 'claude') {
+      setPane('claude', '✳ Claude Code');
+      stream.write('\x1b]0;✳ Claude Code\x07');
+      out(`${C.m}✻${C.r} Claude Code ${C.d}(demo)${C.r}\n\n  ${C.d}cwd: ${cwd}${C.r}\n`);
+      const d = claudeSnapshot(session, cwd, ctx);
+      if (d) out(`\n${C.d}${statusLine(d)}${C.r}\n`);
+    } else {
+      setPane('agy', 'agy');
+      out(`${C.c}▲${C.r} Antigravity CLI ${C.d}(demo)${C.r}\n\n  ${C.d}workspace: ${cwd}${C.r}\n`);
+    }
+  };
+  const leaveAgent = () => {
+    agent = null;
+    setPane('bash', 'acme-prod');
+    out('\n');
+  };
+  const agentAnswer = (text) => {
+    const topic = text.split(/\s+/).slice(0, 4).join(' ');
+    if (agent === 'claude') {
+      setPane('claude', `✳ ${topic}`);
+      stream.write(`\x1b]0;✳ ${topic}\x07`);
+    }
+    out(`\n${C.d}● ${agent === 'claude' ? 'Ishlayapman' : 'Thinking'}…${C.r}`);
+    setTimeout(() => {
+      ctx = Math.min(95, ctx + 9);
+      usage.five = Math.min(100, usage.five + 3.5);
+      usage.week = Math.min(100, usage.week + 0.6);
+      out(`\r\x1b[2K${C.g}●${C.r} Bajarildi: “${topic}”.\n`);
+      if (agent === 'claude') {
+        const d = claudeSnapshot(session, cwd, ctx);
+        if (d) out(`${C.d}${statusLine(d)}${C.r}\n`);
+      }
+      stream.write('\x07'); // what Claude Code sends with preferredNotifChannel = terminal_bell
+      prompt();
+    }, Number(process.env.MOCK_AGENT_MS || 1200));
+  };
 
   const commands = {
     ls(args) {
@@ -291,6 +408,8 @@ function runShell(stream, client) {
       stream.end();
       return 'stop';
     },
+    claude: () => enterAgent('claude'),
+    agy: () => enterAgent('agy'),
   };
 
   out(`Welcome to Ubuntu 24.04.1 LTS (GNU/Linux 6.8.0-45-generic x86_64)\n\n`);
@@ -300,16 +419,39 @@ function runShell(stream, client) {
 
   stream.on('data', (d) => {
     for (const ch of d.toString('utf8')) {
-      if (ch === '\r') {
-        stream.write('\r\n');
-        const [cmd, ...args] = line.trim().split(/\s+/);
+      if (agent && ch === '\n') {
+        // Shift+Enter in Pult sends LF: a new line inside the prompt.
+        line += '\n';
+        stream.write('\r\n  ');
+      } else if (agent && ch === '\r') {
+        const text = line.trim();
         line = '';
-        if (cmd) {
+        if (text === '/exit' || text === 'exit') {
+          leaveAgent();
+          prompt();
+        } else if (text) agentAnswer(text.replace(/\s+/g, ' '));
+        else prompt();
+      } else if (agent && ch === '\x03') {
+        line = '';
+        leaveAgent();
+        prompt();
+      } else if (ch === '\r') {
+        stream.write('\r\n');
+        // Just enough shell for `cd -- '/some dir' && claude` (what Pult types).
+        const parts = line.split('&&');
+        line = '';
+        for (const part of parts) {
+          const [cmd, ...args] = (part.match(/'[^']*'|"[^"]*"|\S+/g) || []).map((w) => w.replace(/^'(.*)'$/, '$1').replace(/^"(.*)"$/, '$1'));
+          if (!cmd) continue;
           const fn = commands[cmd];
           if (fn) {
-            if (fn(args) === 'stop') return;
-          } else out(`${cmd}: command not found\n`);
+            if (fn(cmd === 'cd' ? args.filter((a) => a !== '--') : args) === 'stop') return;
+          } else {
+            out(`${cmd}: command not found\n`);
+            break;
+          }
         }
+        pane.cwd = cwd;
         prompt();
       } else if (ch === '\x7f' || ch === '\b') {
         if (line.length) {
@@ -343,6 +485,27 @@ function runMonitor(stream) {
     while ((i = buf.indexOf('\n')) >= 0) {
       const l = buf.slice(0, i);
       buf = buf.slice(i + 1);
+      if (l === 'a') {
+        // Panes of the pult tmux server + checksums of ~/.pult/state/*.json.
+        let s = '';
+        for (const [name, p] of panes) s += `ap|::|${name}|::|${p.command}|::|${p.cwd}|::|${p.title}\n`;
+        const dir = local(`${HOME}/.pult/state`);
+        for (const f of fs.existsSync(dir) ? fs.readdirSync(dir).filter((x) => x.endsWith('.json')) : []) {
+          const data = fs.readFileSync(path.join(dir, f));
+          const sum = parseInt(require('crypto').createHash('md5').update(data).digest('hex').slice(0, 8), 16);
+          s += `af ${sum} ${data.length} ${HOME}/.pult/state/${f}\n`;
+        }
+        stream.write(`${s}aend\n`);
+      }
+      if (l.startsWith('g ')) {
+        let text = '';
+        try {
+          text = fs.readFileSync(local(l.slice(2)), 'utf8');
+        } catch {
+          // missing: empty reply, like `cat` of a vanished file
+        }
+        stream.write(`gb\n${text}\nge\n`);
+      }
       if (l === 'p') setTimeout(() => stream.write('p\n'), 18 + Math.random() * 10);
       if (l === 's') {
         const busy = 300 + Math.random() * 900;
@@ -421,7 +584,34 @@ new Server({ hostKeys: [hostKey] }, (client, info) => {
           stream.exit(0);
           return stream.end();
         }
-        if (pty && cmd.includes('tmux')) return runShell(stream, client);
+        if (pty && cmd.includes('tmux')) return runShell(stream, client, cmd.match(/S=(pult-\d{4})/)?.[1] || null);
+        if (cmd.includes('kill-session')) panes.delete(cmd.match(/-t (pult-\d{4})/)?.[1]);
+        if (cmd.includes('command -v claude')) {
+          // agents.js detection
+          let v = '';
+          try {
+            v = fs.readFileSync(local(`${HOME}/.pult/bin/claude-statusline`), 'utf8').match(/^# pult-bridge v(\d+)/m)?.[1] || '';
+          } catch {
+            // not installed
+          }
+          stream.write(`C ${AGENTS_OFF ? '' : `${HOME}/.local/bin/claude`}\nA ${AGENTS_OFF ? '' : `${HOME}/.local/bin/agy`}\nB ${bridged() ? 1 : 0}\n${v ? `V ${v}\n` : ''}`);
+          stream.exit(0);
+          return stream.end();
+        }
+        if (cmd.includes('/usage') && cmd.includes('agy')) {
+          setTimeout(() => {
+            if (process.env.MOCK_AGY === 'auth') {
+              stream.write('{"status":"ERROR"}\n');
+              stream.stderr.write('Error: authentication required. Run `agy` to sign in.\n');
+              stream.exit(1);
+            } else {
+              stream.write(`${agyUsage()}\n`);
+              stream.exit(0);
+            }
+            stream.end();
+          }, 300);
+          return;
+        }
         const outage = cmd.match(/MOCK_OUTAGE (\d+)/);
         if (outage) {
           refuseUntil = Date.now() + Number(outage[1]) * 1000;

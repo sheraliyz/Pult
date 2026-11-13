@@ -9,6 +9,7 @@ import { handlePrompt } from './prompts.js';
 import { openSettings } from './settings.js';
 import { Transfers } from './xfer.js';
 import { onThemeChange } from './terminal.js';
+import { usageChips, closeUsagePanel } from './agents.js';
 
 const STATE_LABEL = {
   connecting: 'Ulanmoqda',
@@ -27,6 +28,7 @@ class App {
     this.info = {};
     this.sessions = new Map();
     this.shells = new Map();
+    this.uploadWaiters = new Map(); // transfer job id → callback when it is done
     this.activeId = 'home';
     try {
       this.layout = JSON.parse(localStorage.getItem(LAYOUT_KEY)) || {};
@@ -97,6 +99,7 @@ class App {
   renderStatus() {
     const s = this.sessions.get(this.activeId);
     if (!s) {
+      this.statusbar.classList.remove('has-agents');
       const open = this.sessions.size;
       clear(
         this.sbLeft,
@@ -108,14 +111,18 @@ class App {
     }
     const st = s.state;
     const { username, host, port } = s.server;
+    const agents = st.state === 'ready' ? usageChips(s) : [];
+    this.statusbar.classList.toggle('has-agents', agents.length > 0);
     clear(
       this.sbLeft,
       h('span', { class: `sb-item sb-state state-${st.state}` }, h('span', { class: 'sb-dot' }), STATE_LABEL[st.state] || st.state),
-      h('span', { class: 'sb-item mono' }, `${username}@${host}${port && port !== 22 ? `:${port}` : ''}`),
+      h('span', { class: 'sb-item sb-addr mono' }, `${username}@${host}${port && port !== 22 ? `:${port}` : ''}`),
       st.state === 'ready' &&
         (s.active?.persistent
           ? h('span', { class: 'sb-badge', 'data-tip': 'tmux: aloqa uzilsa ham sessiya saqlanadi' }, icon('shield', 12), 'saqlanadi')
           : st.persist && !st.hasTmux && h('span', { class: 'sb-badge muted', 'data-tip': 'Serverda tmux yo‘q — sessiya saqlanmaydi' }, 'tmux yo‘q')),
+      agents.length > 0 && h('span', { class: 'sb-sep' }),
+      agents,
     );
 
     const m = s.stats;
@@ -123,24 +130,26 @@ class App {
       clear(this.sbRight);
       return;
     }
-    const meter = (label, ratio, text, tip) =>
+    const meter = (label, ratio, text, tip, cls = '') =>
       ratio == null
         ? null
         : h(
             'span',
-            { class: 'sb-item sb-metric', 'data-tip': tip },
+            { class: `sb-item sb-metric ${cls}`, 'data-tip': tip },
             h('span', { class: 'sb-label' }, label),
             h('span', { class: `sb-meter ${ratio > 0.9 ? 'crit' : ratio > 0.75 ? 'warn' : ''}` }, h('span', { style: { width: `${Math.max(2, ratio * 100)}%` } })),
             h('span', { class: 'sb-val' }, text),
           );
     const rtt = m.rtt;
+    const mem = m.memTotal ? m.memUsed / m.memTotal : null;
     clear(
       this.sbRight,
       rtt != null && h('span', { class: `sb-item sb-rtt ${rtt > 250 ? 'warn' : ''}`, 'data-tip': 'Kechikish (ping)' }, h('span', { class: 'sb-label' }, 'Ping'), h('span', { class: 'sb-val' }, `${rtt} ms`)),
       meter('CPU', m.cpu, `${Math.round((m.cpu || 0) * 100)}%`, 'Protsessor yuklamasi'),
-      m.memTotal && meter('RAM', m.memUsed / m.memTotal, `${fmt.bytes(m.memUsed)} / ${fmt.bytes(m.memTotal)}`, 'Operativ xotira'),
-      m.diskTotal && meter('Disk', m.diskUsed / m.diskTotal, `${Math.round((m.diskUsed / m.diskTotal) * 100)}%`, `/ — ${fmt.bytes(m.diskUsed)} / ${fmt.bytes(m.diskTotal)}`),
-      m.uptime && h('span', { class: 'sb-item', 'data-tip': 'Server ishlab turgan vaqt' }, h('span', { class: 'sb-label' }, 'Uptime'), h('span', { class: 'sb-val' }, fmt.uptime(m.uptime))),
+      m.memTotal &&
+        meter('RAM', mem, [h('span', { class: 'sb-long' }, `${fmt.bytes(m.memUsed)} / ${fmt.bytes(m.memTotal)}`), h('span', { class: 'sb-short' }, `${Math.round(mem * 100)}%`)], `Operativ xotira — ${fmt.bytes(m.memUsed)} / ${fmt.bytes(m.memTotal)}`),
+      m.diskTotal && meter('Disk', m.diskUsed / m.diskTotal, `${Math.round((m.diskUsed / m.diskTotal) * 100)}%`, `/ — ${fmt.bytes(m.diskUsed)} / ${fmt.bytes(m.diskTotal)}`, 'sb-disk'),
+      m.uptime && h('span', { class: 'sb-item sb-uptime', 'data-tip': 'Server ishlab turgan vaqt' }, h('span', { class: 'sb-label' }, 'Uptime'), h('span', { class: 'sb-val' }, fmt.uptime(m.uptime))),
     );
   }
 
@@ -148,6 +157,7 @@ class App {
 
   activate(id) {
     if (id !== 'home' && !this.sessions.has(id)) id = 'home';
+    if (id !== this.activeId) closeUsagePanel();
     this.activeId = id;
     this.home.el.classList.toggle('on', id === 'home');
     for (const s of this.sessions.values()) s.el.classList.toggle('on', s.id === id);
@@ -246,6 +256,7 @@ class App {
   async updateSettings(patch) {
     this.settings = await call('settings:set', patch);
     for (const view of this.shells.values()) view.applySettings(this.settings);
+    if ('agentUsage' in patch) this.renderStatus();
   }
 
   /* ---------------- shells registry ---------------- */
@@ -260,6 +271,11 @@ class App {
 
   activeSession() {
     return this.sessions.get(this.activeId) || null;
+  }
+
+  /** Run `fn(job)` when transfer `jobId` finishes (instead of the usual toast). */
+  whenUploaded(jobId, fn) {
+    this.uploadWaiters.set(jobId, fn);
   }
 
   /* ---------------- events ---------------- */
@@ -296,14 +312,36 @@ class App {
       }
     });
     on('prompt', (p) => handlePrompt(p));
-    on('xfer:update', (job) => this.transfers.update(job));
+    on('xfer:update', (job) => {
+      this.transfers.update(job);
+      if (['error', 'cancelled'].includes(job.state) && this.uploadWaiters.has(job.id)) {
+        this.uploadWaiters.delete(job.id);
+        if (job.state === 'error') toast(`Yuklanmadi: ${job.error || job.name}`, 'err', 5000);
+      }
+    });
     on('xfer:cleared', (jobs) => this.transfers.reset(jobs));
     on('xfer:done', (job) => {
       this.sessions.get(job.connId)?.onTransferDone(job);
-      toast(`${job.kind === 'upload' ? 'Yuklandi' : 'Yuklab olindi'}: ${job.name}`, 'ok');
+      const waiter = this.uploadWaiters.get(job.id);
+      this.uploadWaiters.delete(job.id);
+      if (waiter) waiter(job);
+      else toast(`${job.kind === 'upload' ? 'Yuklandi' : 'Yuklab olindi'}: ${job.name}`, 'ok');
+    });
+    on('agents', (connId, st) => this.sessions.get(connId)?.onAgents(st));
+    on('notify:click', (tag) => {
+      const [sid, vid] = String(tag || '').split('/');
+      const s = this.sessions.get(sid);
+      if (!s) return;
+      this.activate(sid);
+      const v = s.shells.find((x) => x.id === vid);
+      if (!v) return;
+      if (s.mode === 'files') s.setMode('split');
+      s.select(v);
     });
 
     addEventListener('online', () => send('net:online'));
+    // Back at the window: the terminal in front has been seen.
+    addEventListener('focus', () => this.activeSession()?.clearAttention());
     onThemeChange(() => {
       for (const v of this.shells.values()) v.applyTheme();
     });
@@ -342,6 +380,7 @@ class App {
     else if (ctrl && e.code === 'PageDown' && s) s.cycleShell(1);
     else if (ctrl && e.code === 'PageUp' && s) s.cycleShell(-1);
     else if (ctrl && e.shiftKey && e.code === 'KeyN') this.editServer();
+    else if (ctrl && e.shiftKey && e.code === 'KeyA' && s && s.state.state === 'ready') s.openAgentMenu();
     else if (ctrl && !e.shiftKey && e.code === 'Comma') openSettings(this);
     else handled = false;
     if (handled) {
