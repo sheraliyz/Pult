@@ -1,5 +1,7 @@
 gradle-wrapper.jar
 /.gradle
+# Gradle writes its problems report here (app output goes to mobile/build).
+/build/
 /captures/
 /gradlew
 /gradlew.bat

@@ -1,0 +1,152 @@
+# Pult release: the Windows installer and portable EXE (built on Windows) and
+# the Android APK, published as GitHub release v<version in package.json>.
+#
+#   Pull request            builds only; the files stay as run artifacts for 7 days.
+#   Run workflow on main,   builds and publishes the release. Running it again for
+#   or a pushed v* tag      the same version replaces that release's files.
+#
+# The APK is published only when it is signed with the key of release 1.0.0,
+# so phones install it as an update. Repository secrets
+# (Settings → Secrets and variables → Actions), the values of key.properties:
+#   ANDROID_KEYSTORE_BASE64    the .jks file, base64-encoded
+#   ANDROID_KEYSTORE_PASSWORD  storePassword
+#   ANDROID_KEY_ALIAS          keyAlias
+#   ANDROID_KEY_PASSWORD       keyPassword
+# Without them the APK is still built (with the debug key) to check the build,
+# but it is not published.
+
+name: Release
+
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run dist -- --publish never
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: |
+            dist/Pult Setup *.exe
+            dist/Pult-portable.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Release key
+        id: key
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE" ]; then
+            echo "::warning::ANDROID_KEYSTORE_BASE64 is not set: the APK is built with the debug key and not published."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Plain base64, or certutil -encode output with its BEGIN/END lines.
+          printf '%s\n' "$KEYSTORE" | sed '/^-----/d' | tr -d ' \t\r\n' | base64 -d > mobile/android/release.jks
+          esc() { printf '%s' "$1" | sed 's/\\/\\\\/g'; }
+          {
+            echo "storeFile=release.jks"
+            echo "storePassword=$(esc "$STORE_PASSWORD")"
+            echo "keyAlias=$(esc "$KEY_ALIAS")"
+            echo "keyPassword=$(esc "$KEY_PASSWORD")"
+          } > mobile/android/key.properties
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.7
+          cache: true
+      - name: Build APK
+        working-directory: mobile
+        run: flutter build apk --release --target-platform android-arm,android-arm64
+      - name: Check signature
+        if: steps.key.outputs.signed == 'true'
+        run: |
+          apk=mobile/build/app/outputs/flutter-apk/app-release.apk
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)/apksigner"
+          "$apksigner" verify --print-certs "$apk" > certs.txt
+          cat certs.txt
+          if grep -q 'CN=Android Debug' certs.txt; then
+            echo "::error::The APK is signed with the debug key, not the release key."
+            exit 1
+          fi
+          mkdir apk && mv "$apk" apk/Pult.apk
+      - if: steps.key.outputs.signed == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: android
+          path: apk/Pult.apk
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    # Only for a v* tag or a manual run on the default branch, never for a PR.
+    if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && github.ref_name == github.event.repository.default_branch)
+    needs: [windows, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: out
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          v=$(node -p "require('./package.json').version")
+          app=$(sed -n 's/^version: *\([^+]*\).*/\1/p' mobile/pubspec.yaml)
+          if [ "$v" != "$app" ]; then
+            echo "::error::package.json says $v but mobile/pubspec.yaml says $app."
+            exit 1
+          fi
+          tag="v$v"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "$tag" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match version $v in package.json."
+            exit 1
+          fi
+          # GitHub turns spaces in asset names into dots; do it here so that
+          # --clobber finds the files of an earlier run (Pult.Setup.1.1.0.exe).
+          for f in out/*; do
+            case "$f" in *' '*) mv "$f" "${f// /.}" ;; esac
+          done
+          ls -l out
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" out/* --clobber
+          else
+            gh release create "$tag" out/* --title "Pult $v" --target "$GITHUB_SHA" --generate-notes
+          fi
+          echo "Release: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$tag" >> "$GITHUB_STEP_SUMMARY"
