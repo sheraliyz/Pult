@@ -58,6 +58,10 @@ const PATHS = {
   more: '<circle cx="6.5" cy="12" r="1.1" fill="currentColor"/><circle cx="12" cy="12" r="1.1" fill="currentColor"/><circle cx="17.5" cy="12" r="1.1" fill="currentColor"/>',
   chevron: '<path d="M10 7l5 5-5 5"/>',
   chevronDown: '<path d="M7 10l5 5 5-5"/>',
+  chevronLeft: '<path d="M14.5 6.5L9 12l5.5 5.5"/>',
+  filter: '<path d="M4.5 6h15l-5.8 6.8v5l-3.4 1.7v-6.7z"/>',
+  bolt: '<path d="M13 3.5L5.5 13.5h6l-1 7 7.5-10h-6z"/>',
+  chevronRight: '<path d="M9.5 6.5L15 12l-5.5 5.5"/>',
   check: '<path d="M5.5 12.5l4 4 9-9"/>',
   lock: '<rect x="5.5" y="10.5" width="13" height="9" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>',
   key: '<circle cx="8.5" cy="15.5" r="3.5"/><path d="M11 13l7.5-7.5M15.5 8.5l2.5 2.5"/>',
@@ -87,6 +91,14 @@ const PATHS = {
   bell: '<path d="M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 1.5H5z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
   gauge: '<path d="M4.5 16.5a7.5 7.5 0 1 1 15 0"/><path d="M12 16.5l3.5-4.5"/>',
   resume: '<path d="M5 12a7 7 0 1 0 2.1-5"/><path d="M4.5 4.5v4h4"/><path d="M10.5 9.5l4 2.5-4 2.5z"/>',
+  cog: '<circle cx="12" cy="12" r="3"/><path d="M12 3.5v2.3M12 18.2v2.3M3.5 12h2.3M18.2 12h2.3M6 6l1.6 1.6M16.4 16.4L18 18M6 18l1.6-1.6M16.4 7.6L18 6"/>',
+  box: '<path d="M12 3.8l7.5 4.2v8L12 20.2 4.5 16V8z"/><path d="M4.5 8L12 12l7.5-4M12 12v8.2"/>',
+  logs: '<path d="M9 6.5h10.5M9 12h10.5M9 17.5h7"/><path d="M4.75 6.5h.01M4.75 12h.01M4.75 17.5h.01"/>',
+  disk: '<rect x="3.5" y="13" width="17" height="6.5" rx="1.8"/><path d="M5.2 13L8 5.5h8l2.8 7.5"/><path d="M16.75 16.25h.01"/>',
+  play: '<path d="M8 5.5l10.5 6.5L8 18.5z"/>',
+  stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="1.6"/>',
+  pause: '<path d="M9 6v12M15 6v12"/>',
+  wrap: '<path d="M4.5 6.5h15M4.5 12h11.5a3 3 0 0 1 0 6h-3.5"/><path d="M14.5 16l-2 2 2 2"/><path d="M4.5 18h4.5"/>',
 };
 
 const tpl = document.createElement('template');
@@ -214,5 +226,8 @@ export const posix = {
     return p.replace(/\/+$/, '').split('/').pop() || '/';
   },
 };
+
+/** Two letters for a server badge: "acme-prod" → "AC". */
+export const initials = (s) => (String(s || '').match(/[\p{L}\p{N}]/gu) || ['?']).slice(0, 2).join('').toUpperCase();
 
 export const shellQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;

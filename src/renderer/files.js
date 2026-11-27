@@ -4,7 +4,7 @@ import { call, pathForFile } from './api.js';
 import { h, icon, clear, fmt, posix } from './dom.js';
 import { menu, toast, confirmDialog, inputDialog, modal, busy, segmented, field } from './ui.js';
 import { openEditor } from './editor.js';
-import { kindOf, kindIcon, KIND_LABEL } from './filekinds.js';
+import { kindOf, KIND_LABEL } from './filekinds.js';
 import { agentMenuItems } from './agents.js';
 
 const COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
@@ -46,8 +46,8 @@ export class FilesView {
   /* ---------------- DOM ---------------- */
 
   build() {
-    this.backBtn = h('button', { class: 'icon-btn', type: 'button', 'data-tip': 'Orqaga', onclick: () => this.back() }, icon('back', 16));
-    this.upBtn = h('button', { class: 'icon-btn', type: 'button', 'data-tip': 'Yuqori papka (Backspace)', onclick: () => this.up() }, icon('up', 16));
+    this.backBtn = h('button', { class: 'key key-gray key-icon', type: 'button', 'data-tip': 'Orqaga', 'aria-label': 'Orqaga', onclick: () => this.back() }, icon('back', 16));
+    this.upBtn = h('button', { class: 'key key-gray key-icon', type: 'button', 'data-tip': 'Yuqori papka (Backspace)', 'aria-label': 'Yuqori papka', onclick: () => this.up() }, icon('up', 16));
     this.crumbs = h('div', { class: 'crumbs', 'data-tip': 'Yo‘lni yozish uchun bosing' });
     this.crumbs.addEventListener('click', (e) => {
       if (e.target === this.crumbs) this.editPath();
@@ -65,7 +65,7 @@ export class FilesView {
     });
     this.pathInput.addEventListener('blur', () => this.stopEditPath());
 
-    this.filterInput = h('input', { class: 'f-filter-input', placeholder: 'Filtr', spellcheck: 'false' });
+    this.filterInput = h('input', { class: 'f-filter-input', placeholder: 'Filtr', spellcheck: 'false', 'aria-label': 'Fayllarni filtrlash' });
     this.filterInput.addEventListener('input', () => {
       this.filter = this.filterInput.value.trim().toLowerCase();
       this.filterInput.parentElement.classList.toggle('has-value', !!this.filter);
@@ -88,18 +88,18 @@ export class FilesView {
       { class: 'f-toolbar' },
       h('div', { class: 'f-nav' }, this.backBtn, this.upBtn),
       h('div', { class: 'crumbs-wrap' }, this.crumbs, this.pathInput),
-      h('label', { class: 'f-filter' }, icon('search', 14), this.filterInput),
+      h('label', { class: 'f-filter', 'data-tip': 'Shu papkani filtrlash · Ctrl+F' }, icon('filter', 15), this.filterInput),
       h(
         'div',
         { class: 'f-actions' },
-        h('button', { class: 'icon-btn', type: 'button', 'data-tip': 'Papkalar ichidan qidirish · Ctrl+Shift+F', onclick: () => this.openSearch() }, icon('search', 16)),
-        h('button', { class: 'icon-btn', type: 'button', 'data-tip': 'Yangilash (F5)', onclick: () => this.refresh() }, icon('refresh', 16)),
-        h('button', { class: 'icon-btn', type: 'button', 'data-tip': 'Yangi papka', onclick: () => this.newFolder() }, icon('folderPlus', 16)),
-        h('button', { class: 'icon-btn', type: 'button', 'data-tip': 'Yangi fayl', onclick: () => this.newFile() }, icon('filePlus', 16)),
+        h('button', { class: 'key key-gray f-search', type: 'button', 'data-tip': 'Papkalar ichidan qidirish · Ctrl+Shift+F', onclick: () => this.openSearch() }, icon('search', 16), h('span', { class: 'btn-label' }, 'Qidirish')),
+        h('button', { class: 'key key-gray key-icon f-mk', type: 'button', 'data-tip': 'Yangi papka', 'aria-label': 'Yangi papka', onclick: () => this.newFolder() }, icon('folderPlus', 17)),
+        h('button', { class: 'key key-gray key-icon f-mk', type: 'button', 'data-tip': 'Yangi fayl', 'aria-label': 'Yangi fayl', onclick: () => this.newFile() }, icon('filePlus', 17)),
+        h('button', { class: 'key key-gray key-icon f-mk', type: 'button', 'data-tip': 'Yangilash (F5)', 'aria-label': 'Yangilash', onclick: () => this.refresh() }, icon('refresh', 17)),
         h(
           'button',
           {
-            class: 'btn btn-sm',
+            class: 'key key-signal f-upload',
             type: 'button',
             onclick: (e) => {
               const r = e.currentTarget.getBoundingClientRect();
@@ -151,7 +151,10 @@ export class FilesView {
     this.loadingBar = h('div', { class: 'f-loading' });
 
     this.clipBar = h('div', { class: 'f-clip', hidden: true });
-    this.el = h('div', { class: 'files' }, toolbar, this.loadingBar, this.clipBar, this.head, this.list, this.dropHint);
+    this.footInfo = h('span', { class: 'f-foot-info' });
+    this.footSel = h('span', { class: 'f-foot-sel' });
+    this.foot = h('div', { class: 'f-foot' }, this.footInfo, this.footSel);
+    this.el = h('div', { class: 'files' }, toolbar, this.loadingBar, this.clipBar, this.head, this.list, this.foot, this.dropHint);
     views.add(this);
     // Long paths: always keep the current folder (the end) in view.
     new ResizeObserver(() => (this.crumbs.scrollLeft = this.crumbs.scrollWidth)).observe(this.crumbs);
@@ -302,6 +305,7 @@ export class FilesView {
     }
     const rows = this.visible();
     this.rowsCache = rows;
+    this.renderFoot();
     if (!rows.length) {
       if (this.filter) this.showEmpty('search', 'Hech narsa topilmadi', `“${this.filterInput.value}” bo‘yicha natija yo‘q`);
       else if (this.loaded) this.showEmpty('folder', 'Bo‘sh papka', 'Fayllarni shu yerga sudrab tashlang');
@@ -315,6 +319,39 @@ export class FilesView {
     this.paintSelection();
   }
 
+  /** "12 ta element · 4 ta papka · 2 ta yashirin" under the list. */
+  renderFoot() {
+    if (!this.loaded) {
+      this.footInfo.textContent = '';
+      this.renderFootSel();
+      return;
+    }
+    const shown = this.rowsCache || [];
+    const dirs = shown.filter(isDirLike).length;
+    const hidden = this.showHidden ? 0 : this.entries.filter((e) => e.name.startsWith('.')).length;
+    const parts = [`${shown.length} ta element`];
+    if (dirs) parts.push(`${dirs} ta papka`);
+    if (this.filter) parts.push(`filtr: “${this.filterInput.value.trim()}”`);
+    else if (hidden) parts.push(`${hidden} ta yashirin`);
+    this.footInfo.textContent = parts.join(' · ');
+    this.renderFootSel();
+  }
+
+  renderFootSel() {
+    const items = this.selectedEntries();
+    if (!items.length) {
+      this.footSel.textContent = '';
+      return;
+    }
+    if (items.length === 1) {
+      const e = items[0];
+      this.footSel.textContent = `Tanlangan: ${e.name}${isDirLike(e) ? '' : ` · ${fmt.bytes(e.size)}`}`;
+      return;
+    }
+    const bytes = items.filter((e) => !isDirLike(e)).reduce((a, e) => a + (e.size || 0), 0);
+    this.footSel.textContent = `Tanlangan: ${items.length} ta${bytes ? ` · ${fmt.bytes(bytes)}` : ''}`;
+  }
+
   showEmpty(ic, title, text, extra) {
     clear(this.empty, h('div', { class: 'f-empty-ic' }, icon(ic, 22)), h('div', { class: 'f-empty-title' }, title), text && h('div', { class: 'f-empty-text' }, text), extra);
     this.empty.hidden = false;
@@ -326,7 +363,7 @@ export class FilesView {
     const nameCell = h(
       'span',
       { class: 'c-name' },
-      h('span', { class: `f-ic k-${kind}`, 'data-tip': KIND_LABEL[kind] }, kindIcon(kind, 15)),
+      h('span', { class: `f-badge ${isDir ? 'dir' : ''}`, 'data-tip': KIND_LABEL[kind] }, badgeText(e, isDir)),
       h('span', { class: 'f-name' }, e.name),
       e.type === 'link' && h('span', { class: 'f-link', 'data-tip': e.target === 'broken' ? 'Buzilgan havola' : 'Simvolik havola' }, icon('link', 13)),
     );
@@ -373,6 +410,7 @@ export class FilesView {
   }
 
   paintSelection(scroll = false) {
+    this.renderFootSel();
     for (const el of this.rowsEl.children) {
       const name = el.dataset.name;
       el.classList.toggle('selected', this.selected.has(name));
@@ -523,8 +561,12 @@ export class FilesView {
     const canPaste = this.canPaste();
     menu(x, y, [
       single && isDir && { label: 'Ochish', icon: 'folder', hint: 'Enter', onClick: () => this.open(single) },
+      single && !isDir && isImage(single.name) && { label: 'Ko‘rish', icon: 'eye', hint: 'Enter', onClick: () => this.preview(single) },
       single && !isDir && !binary && { label: 'Tahrirlash', icon: 'pencil', hint: 'Enter', onClick: () => this.edit(single) },
+      single && !isDir && { label: 'Kompyuterda ochish', icon: 'reveal', onClick: () => this.openLocal(single) },
+      single && !isDir && !binary && { label: 'Logni kuzatish', icon: 'logs', onClick: () => this.session.openSystem('logs', { source: { kind: 'file', path: posix.join(this.cwd, single.name) } }) },
       single && isDir && { label: 'Terminalda ochish', icon: 'terminal', onClick: () => this.session.cdInTerminal(posix.join(this.cwd, single.name)) },
+      single && isDir && { label: 'Joy tahlili', icon: 'disk', onClick: () => this.session.openSystem('disk', { dir: posix.join(this.cwd, single.name) }) },
       ...(single && isDir ? agentMenuItems(this.session, { dir: posix.join(this.cwd, single.name) }) : []),
       archive && { label: 'Shu yerga ochish', icon: 'unarchive', onClick: () => this.extract(single, 'here') },
       archive && { label: `“${single.name.replace(ARCHIVE_RE, '')}/” papkasiga ochish`, icon: 'unarchive', onClick: () => this.extract(single, 'folder') },
@@ -570,7 +612,90 @@ export class FilesView {
   open(e) {
     const isDir = e.type === 'dir' || (e.type === 'link' && e.target === 'dir');
     if (isDir) this.go(posix.join(this.cwd, e.name));
+    else if (isImage(e.name)) this.preview(e);
     else this.edit(e);
+  }
+
+  /** Copy to this computer, open with its own program; saves go back to the server. */
+  async openLocal(e, path = posix.join(this.cwd, e.name)) {
+    const done = busy('Kompyuterga olinmoqda…');
+    try {
+      await call('fs:openLocal', this.connId, path);
+      toast(`“${posix.basename(path)}” ochildi — saqlasangiz serverga o‘zi qaytadi`, 'ok', 4000);
+    } catch (err) {
+      toast(err.message, 'err', 5000);
+    } finally {
+      done();
+    }
+  }
+
+  /** Image viewer; ← → walk through the other images in this folder. */
+  async preview(e) {
+    const images = this.visible().filter((x) => !isDirLike(x) && isImage(x.name));
+    let i = Math.max(0, images.findIndex((x) => x.name === e.name));
+    const img = h('img', { class: 'pv-img', alt: '' });
+    const info = h('div', { class: 'pv-info' });
+    const stage = h('div', { class: 'pv-stage' }, h('span', { class: 'spinner lg' }));
+    let seq = 0;
+    const show = async () => {
+      const cur = images[i] || e;
+      const path = posix.join(this.cwd, cur.name);
+      const my = ++seq;
+      m.el.querySelector('.m-title').textContent = cur.name;
+      clear(stage, h('span', { class: 'spinner lg' }));
+      clear(info, `${fmt.bytes(cur.size)}${images.length > 1 ? ` · ${i + 1} / ${images.length}` : ''}`);
+      try {
+        const r = await call('fs:preview', this.connId, path);
+        if (my !== seq) return;
+        img.onload = () => {
+          if (my === seq) info.append(` · ${img.naturalWidth}×${img.naturalHeight}`);
+        };
+        img.onerror = () => {
+          if (my === seq) clear(stage, h('div', { class: 'pv-err' }, 'Rasmni ochib bo‘lmadi: fayl buzilgan yoki bu turdagi rasm qo‘llab-quvvatlanmaydi.'));
+        };
+        img.src = r.url;
+        clear(stage, img);
+      } catch (err) {
+        if (my === seq) clear(stage, h('div', { class: 'pv-err' }, err.message));
+      }
+      // Follow along in the list without taking focus from the viewer.
+      this.selected = new Set([cur.name]);
+      this.cursor = cur.name;
+      this.paintSelection(true);
+    };
+    const step = (d) => {
+      if (images.length < 2) return;
+      i = (i + d + images.length) % images.length;
+      show();
+    };
+    const m = modal({
+      title: e.name,
+      icon: 'eye',
+      width: 860,
+      className: 'pv-modal',
+      body: h(
+        'div',
+        { class: 'pv' },
+        stage,
+        h(
+          'div',
+          { class: 'pv-bar' },
+          images.length > 1 && h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Oldingi rasm', 'data-tip': 'Oldingi (←)', onclick: () => step(-1) }, icon('back', 16)),
+          images.length > 1 && h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Keyingi rasm', 'data-tip': 'Keyingi (→)', onclick: () => step(1) }, h('span', { style: { display: 'inline-flex', transform: 'scaleX(-1)' } }, icon('back', 16))),
+          info,
+        ),
+      ),
+      actions: [
+        { label: 'Yopish', value: null },
+        { label: 'Yuklab olish', onClick: () => (call('xfer:download', this.connId, [posix.join(this.cwd, (images[i] || e).name)], null), false) },
+        { label: 'Kompyuterda ochish', kind: 'primary', onClick: () => (this.openLocal(images[i] || e), false) },
+      ],
+    });
+    m.el.addEventListener('keydown', (ev) => {
+      if (ev.key === 'ArrowLeft') step(-1);
+      else if (ev.key === 'ArrowRight') step(1);
+    });
+    show();
   }
 
   async edit(e, { path: fullPath, line } = {}) {
@@ -580,13 +705,19 @@ export class FilesView {
       openEditor(this.session, path, r.text, () => this.refresh(), { line });
     } catch (err) {
       if (err.code === 'BINARY' || err.code === 'TOO_BIG') {
-        const ok = await confirmDialog({
+        const choice = await modal({
           title: err.code === 'BINARY' ? 'Matnli fayl emas' : 'Fayl juda katta',
-          message: `“${posix.basename(path)}” ni tahrirlab bo‘lmaydi. Kompyuterga yuklab olinsinmi?`,
-          confirm: 'Yuklab olish',
-          icon: 'download',
-        });
-        if (ok) call('xfer:download', this.connId, [path], null);
+          icon: 'file',
+          width: 440,
+          body: h('p', { class: 'm-text' }, `“${posix.basename(path)}” ni Pult ichida tahrirlab bo‘lmaydi. Kompyuterdagi dasturda ochsangiz, saqlaganingizda serverga o‘zi qaytadi.`),
+          actions: [
+            { label: 'Bekor qilish', value: null },
+            { label: 'Yuklab olish', value: 'download' },
+            { label: 'Kompyuterda ochish', kind: 'primary', value: 'local' },
+          ],
+        }).promise;
+        if (choice === 'download') call('xfer:download', this.connId, [path], null);
+        else if (choice === 'local') this.openLocal(null, path);
       } else {
         toast(err.message, 'err');
       }
@@ -868,12 +999,12 @@ export class FilesView {
         status.textContent = list.length ? `${list.length}${list.length >= 300 ? '+' : ''} ta natija` : 'Hech narsa topilmadi';
         for (const r of list) {
           const rel = r.path.startsWith(`${this.cwd}/`) ? r.path.slice(this.cwd.length + 1) : r.path;
-          const kind = kindOf({ name: posix.basename(r.path), type: r.type, mode: 0 });
+          const isDir = r.type === 'dir';
           results.append(
             h(
               'button',
               { class: 'srch-row', type: 'button', onclick: () => go(r) },
-              h('span', { class: `f-ic k-${kind}` }, kindIcon(kind, 14)),
+              h('span', { class: `f-badge ${isDir ? 'dir' : ''}` }, badgeText({ name: posix.basename(r.path), type: r.type }, isDir)),
               h(
                 'span',
                 { class: 'srch-main' },
@@ -1027,6 +1158,23 @@ export class FilesView {
     if (job.kind === 'upload' && job.remoteDir && (job.remoteDir === this.cwd || posix.dirname(job.remoteDir) === this.cwd)) this.refresh();
   }
 }
+
+// Short type label for the badge in front of a name: "yml", "sh", "gz"; "/" for folders.
+const SPECIAL_NAMES = { dockerfile: 'dock', makefile: 'make', license: 'lic', procfile: 'proc', gemfile: 'gem', vagrantfile: 'vagr', jenkinsfile: 'jenk' };
+function badgeText(e, isDir) {
+  if (isDir) return '/';
+  if (e.type === 'link' && e.target === 'broken') return '?';
+  const name = String(e.name || '');
+  const special = SPECIAL_NAMES[name.toLowerCase()];
+  if (special) return special;
+  const dot = name.lastIndexOf('.');
+  if (dot > 0 && dot < name.length - 1) return name.slice(dot + 1, dot + 5).toLowerCase();
+  if (dot === 0 && name.length > 1) return name.slice(1, 5).toLowerCase();
+  return e.mode & 0o111 ? 'bin' : 'fayl';
+}
+
+const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|ico|svg|avif)$/i;
+const isImage = (name) => IMAGE_RE.test(name);
 
 function hasFiles(e) {
   return [...(e.dataTransfer?.types || [])].includes('Files');

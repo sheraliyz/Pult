@@ -1,222 +1,205 @@
 # Pult
 
-Serverni boshqarish uchun ilova: **terminal + fayllar**, bitta oynada, minimal dizayn.
-Windows va Android. Bepul va ochiq kodli (MIT).
+Serveringizni Windows’dan boshqarish uchun ilova: **SSH terminal, fayllar va serverning o‘zi** (xizmatlar, Docker,
+loglar, disk) bitta oynada. Internet uzilsa ham terminaldagi ish to‘xtamaydi. **Claude Code** va **agy** bilan ishlash
+uchun alohida qulayliklar bor.
 
-![Pult](docs/promo/preview.gif)
+Bepul va ochiq kodli (MIT).
 
-![Terminal](docs/terminal-2.png)
-![Yonma-yon](docs/split.png)
-
-🎬 Promo video: [gorizontal (1920×1080)](docs/promo/pult-promo.mp4) · [vertikal (1080×1920)](docs/promo/pult-promo-vertical.mp4)
+![Pult: terminal](docs/terminal.png)
 
 ## O‘rnatish
 
-Tayyor fayllar **Releases** sahifasida:
+[Releases](https://github.com/sheraliyz/Pult/releases/latest) sahifasidan yuklab oling:
 
-- `Pult Setup 1.0.0.exe` — Windows o‘rnatuvchisi (Start menyu va ish stolida yorliq paydo bo‘ladi).
-- `Pult-portable.exe` — o‘rnatmasdan ishlaydi.
-- `Pult.apk` — Android 7.0 va undan yangi telefonlar uchun.
+- **`Pult.Setup.<versiya>.exe`** — o‘rnatuvchi (tavsiya etiladi). Start menyu va ish stolida yorliq paydo bo‘ladi.
+  Keyingi versiyalar chiqqanda Pult o‘zi aytadi va bir bosishda yangilanadi.
+- **`Pult-portable.exe`** — o‘rnatmasdan ishlaydi (o‘zini yangilay olmaydi, faqat yangi versiya sahifasini ochadi).
 
-Ilova raqamli imzolanmagan, shuning uchun Windows birinchi marta “Windows protected your PC” deb ko‘rsatishi mumkin:
-**More info → Run anyway**.
+Windows 10 yoki 11 (64-bit) kerak. Ilova raqamli imzolanmagan, shuning uchun Windows birinchi marta
+“Windows protected your PC” deb ko‘rsatishi mumkin: **More info → Run anyway**.
 
-## Aloqa uzilmasligi (1:1)
+**Serverda:** SSH bo‘lsa yetarli. `tmux` o‘rnatib qo‘ying (`sudo apt install tmux`): shunda aloqa uzilganda ham
+terminaldagi dasturlar ishlashda davom etadi.
 
-- **Sessiya saqlanadi.** Har bir terminal serverda alohida `tmux` sessiyasi ichida ishlaydi (sizning tmux sozlamalaringizga tegmaydi).
-  Internet uzilsa, kompyuter uxlab qolsa yoki ilovani yopsangiz ham, serverdagi jarayonlar ishlashda davom etadi.
-  Qayta ulanganda terminal aynan qolgan joyidan ochiladi.
-  Serverga tmux o‘rnatib qo‘ying: `sudo apt install tmux` (yoki `dnf install tmux`).
-- **Avtomatik qayta ulanish.** Keepalive o‘lik aloqani ~20 soniyada aniqlaydi, so‘ng 1, 2, 3, 5… soniya oraliqda o‘zi qayta ulanadi.
-  Uyqudan uyg‘onganda yoki internet qaytganda darhol tekshiradi.
-- **Fayl uzatish davom etadi.** Yuklash/yuklab olish paytida aloqa uzilsa, ish to‘xtab turadi va
-  qayta ulanganda boshidan emas, qolgan joyidan davom etadi.
+## Terminal
 
-## AI agentlar: Claude Code va agy
+- **Ish yo‘qolmaydi.** Har bir terminal serverda alohida `tmux` sessiyasida ishlaydi (sizning tmux sozlamalaringizga
+  tegmaydi). Internet uzilsa, kompyuter uxlab qolsa yoki Pult yopilsa ham dasturlar ishlashda davom etadi. Qayta
+  ulanganda terminal aynan qolgan joyidan ochiladi, oldingi chiqish ham (20 000 qatorgacha) tarixda turadi.
+- **O‘zi qayta ulanadi.** O‘lik aloqani ~20 soniyada sezadi va 1, 2, 3, 5… soniya oraliqda qayta ulanadi.
+  Uyqudan uyg‘onganda yoki internet qaytganda darhol tekshiradi. Pult ochilganda oxirgi ochiq serverlarga o‘zi ulanadi.
+- Bir serverda bir nechta terminal, bir vaqtda bir nechta server. Ichida dastur (Claude Code, vim, build…) ishlayotgan
+  terminalni yopishdan oldin so‘raydi.
+- To‘liq terminal: ranglar, vim, htop, mc, sichqoncha, Unicode, qidiruv (`Ctrl+Shift+F`). Serverdagi dastur nusxalagan
+  matn Windows buferiga tushadi (OSC 52).
+- **Tez buyruqlar.** `df -h`, `docker ps` kabi buyruqlarni saqlab, bir bosishda yoki `Alt+1…9` bilan yuborasiz.
 
-![AI limitlari](docs/ai-limits.png)
+## Fayllar
 
-Serverda [Claude Code](https://code.claude.com) (`claude`) yoki Antigravity CLI (`agy`) o‘rnatilgan bo‘lsa, Pult ularni o‘zi topadi.
-
-- **Limitlar doim ko‘rinib turadi.** Holat qatorida obunangizning 5 soatlik va haftalik limiti qancha ishlatilgani,
-  bosganda esa batafsil: qachon tiklanishi, qolgan vaqt, joriy terminaldagi model va kontekst.
-  - *Claude Code:* birinchi marta holat qatoridagi **Claude → limitni ulash** ni bosing. Pult serverdagi
-    `~/.claude/settings.json` ga kichik status line skriptini (`~/.pult/bin/claude-statusline`) ulaydi —
-    Claude Code limit ma’lumotini aynan shu yo‘l bilan beradi. O‘zingizning status line’ingiz bo‘lsa, u ham
-    ishlashda davom etadi; avvalgi fayl `settings.json.pult-backup` sifatida saqlanadi, **Uzish** hammasini
-    avvalgi holatiga qaytaradi. Ma’lumot Claude Code har javob berganda yangilanadi (faqat Pro/Max obunada bor).
-  - *agy:* `agy -p /usage` orqali o‘zi olinadi (har 3–10 daqiqada, panelda **yangilash** tugmasi ham bor),
-    har bir model guruhi alohida ko‘rsatiladi.
-- **Bir bosishda ishga tushirish.** Asboblar qatoridagi **AI** tugmasi (`Ctrl+Shift+A`): Claude Code yoki agy yangi
-  terminalda, joriy terminal turgan papkada ochiladi; **oxirgi suhbat** (`-c`) ham bor. Fayllarda papkani
-  o‘ng tugma bilan bosing → **Claude Code’ni shu yerda ochish**.
-- **Qaysi terminalda agent ishlayotgani** yorliqda belgi bilan ko‘rinadi.
-- **Bildirishnoma.** Boshqa oyna yoki serverda bo‘lsangiz va agent ishni tugatsa yoki ruxsat so‘rasa (terminal signali),
-  yorliqda nuqta paydo bo‘ladi va Windows bildirishnomasi chiqadi — bosilsa, o‘sha terminal ochiladi.
-  Claude Code uchun signal limitlarni ulaganda yoqiladi (`preferredNotifChannel`, agar o‘zingiz boshqasini tanlamagan bo‘lsangiz).
-- **Shift+Enter — yangi qator** (xabarni yubormasdan).
-- **Skrinshot va fayllar.** Rasmni `Ctrl+V` bilan qo‘ysangiz yoki faylni terminalga sudrab tashlasangiz, u serverdagi
-  `~/.pult/uploads` papkasiga yuklanadi va yo‘li yoziladi — Claude Code va agy rasmni shu yo‘l orqali ko‘radi.
-  7 kundan eski yuklamalar o‘zi o‘chiriladi.
-- Sozlamalar → **AI agentlar**: limitlar, bildirishnomalar, Shift+Enter va ishga tushirish buyrug‘i
-  (masalan, `claude --model opus`).
-
-## Imkoniyatlar
-
-- To‘liq terminal (xterm.js): ranglar, vim, htop, mc, sichqoncha, Unicode, qidiruv.
-- Serverdagi dasturlar (tmux, vim, Claude CLI) nusxalagan matn to‘g‘ridan-to‘g‘ri Windows buferiga tushadi (OSC 52).
-- Bir serverda bir nechta terminal, bir vaqtda bir nechta server.
-- Holat qatori: ping, CPU, RAM, disk, uptime va AI agent limitlari.
-- Parollar Windows himoyasi (DPAPI) bilan shifrlab saqlanadi. Server kaliti birinchi ulanishda tasdiqlanadi.
-- Parol, SSH kalit yoki ssh-agent orqali kirish; `~/.ssh/config` dan import.
-- Qorong‘i va yorug‘ mavzu.
-
-### Fayllar
-
-![Fayl menyusi](docs/files-menu.png)
+![Fayllar va terminal yonma-yon](docs/split.png)
 
 - Ko‘rish, yuklash (sudrab tashlash ham), yuklab olish, nomini o‘zgartirish, o‘chirish, huquqlar (chmod), yangi papka/fayl.
-- Papka va fayllar oson ajraladi: har bir fayl turi o‘z belgisi va rangiga ega (APK, EXE, arxiv, rasm, video, kod, SQL, kalit…).
-- **Nusxalash / kesib olish / qo‘yish** — server ichida, yuklab olmasdan (`cp -a`, `mv`). Bir xil nom bo‘lsa
-  `nom (1)` qilib qo‘yadi, hech narsani ustidan yozmaydi. **Dublikat** — bir bosishda nusxa.
-- **Arxivlash:** belgilangan fayl/papkalardan `.zip` yoki `.tar.gz` yasash; `.zip`, `.tar.gz`, `.tgz`, `.tar.xz`, `.tar.bz2`, `.tar`
-  arxivlarini “shu yerga” yoki alohida papkaga ochish. Hammasi serverning o‘zida bajariladi.
-- **Qidiruv:** joriy papka va ichidagi papkalarda fayl nomi bo‘yicha yoki fayl ichidagi matn bo‘yicha.
-  Natijani bossangiz, fayl muharrirda aynan shu qatorda ochiladi.
-- **Xususiyatlar:** turi, joylashuvi, hajmi, sanasi, huquqlar, egasi; papka uchun umumiy hajm va fayllar soni.
+  Har bir fayl turi kengaytmasi bilan ko‘rinadi.
+- **Server ichida nusxalash, kesib olish va qo‘yish** (yuklab olmasdan). Bir xil nom bo‘lsa `nom (1)` qilib qo‘yadi,
+  ustidan yozmaydi. Dublikat, arxivlash (`.zip`, `.tar.gz`) va arxivni ochish.
+- **Qidiruv:** fayl nomi yoki fayl ichidagi matn bo‘yicha. Natija muharrirda aynan o‘sha qatorda ochiladi.
+- **Rasmlar** ilova ichida ko‘rinadi (← → bilan keyingisiga o‘tasiz).
+- **Kompyuterda ochish:** fayl o‘z dasturida (VS Code, Photoshop…) ochiladi, saqlaganingizda serverga o‘zi qaytadi.
+  Serverdagi nusxa bu orada o‘zgargan bo‘lsa, ustidan yozishdan oldin so‘raydi.
+- **Uzatish.** Aloqa uzilsa, qolgan joyidan davom etadi. Uzatish paytida ping ko‘tarilmaydi: Pult navbat yig‘ilayotganini
+  sezib sekinlashadi, terminal kechikmaydi. Eng tez uzatish kerak bo‘lsa: Sozlamalar → Fayllar → **Maksimal tezlik**.
 
-![Qidiruv](docs/search.png)
+![Fayl menyusi](docs/files-menu.png)
 
 ### Muharrir
 
 ![Muharrir](docs/editor.png)
 
-- Kod ranglari: shell, Python, JS/TS, JSON, YAML, Docker, nginx, SQL, PHP, Go, Rust, Markdown, `.env`, `.ini`/`.toml` va boshqalar.
-- Qidirish va almashtirish (katta-kichik harf, regexp, butun so‘z), qatorga o‘tish, bekor qilish/qaytarish,
-  qatorlarni o‘rash, qator raqamlari, qavslarni yoritish, kod bloklarini yig‘ish.
-- `CRLF`/`LF` saqlanadi: Windows’da yozilgan faylning qator oxirlari buzilmaydi.
+Kod ranglari (shell, Python, JS/TS, JSON, YAML, Docker, nginx, SQL, PHP, Go, Rust, Markdown, `.env` va boshqalar),
+qidirish va almashtirish, qatorga o‘tish, qatorlarni o‘rash. `CRLF`/`LF` saqlanadi.
+
+## Tizim: xizmatlar, Docker, loglar, disk
+
+Chap paneldagi **Tizim** (`Ctrl+Shift+4`): serverni terminalsiz boshqarish.
+
+- **Xizmatlar (systemd).** Hamma xizmatlar holati bilan, xatodagilari tepada. Bir bosishda ishga tushirish,
+  to‘xtatish, qayta ishga tushirish va loglari. SSH xizmatini to‘xtatishdan oldin alohida ogohlantiradi.
+
+  ![Xizmatlar](docs/system-services.png)
+
+- **Docker.** Konteynerlar holati, portlari, CPU va RAM sarfi; ishga tushirish, to‘xtatish, qayta ishga tushirish, loglar.
+
+  ![Docker](docs/system-docker.png)
+
+- **Loglar.** Xizmat, konteyner, tizim jurnali yoki istalgan log fayli jonli oqimda. Filtr, pauza, qatorlarni o‘rash.
+  Xatolar qizil, ogohlantirishlar sariq rangda. Faylning logini **Fayllar**da o‘ng tugma → **Logni kuzatish** bilan ham ochasiz.
+
+  ![Loglar](docs/system-logs.png)
+
+- **Disk.** Disklar qanchalik to‘lgani va **joy nimaga ketgani**: papkalar kattasidan kichigiga, ichiga kirib borasiz.
+  100 MB dan katta fayllarni topadi va Fayllarda ko‘rsatadi.
+
+  ![Disk](docs/system-disk.png)
+
+- **Ogohlantirish.** Disk 90% dan oshsa yoki RAM bir daqiqa davomida deyarli to‘lsa, Windows bildirishnomasi chiqadi.
+  Bosganingizda kerakli oyna ochiladi.
+
+Root bo‘lmagan foydalanuvchida bu amallar parolsiz `sudo` orqali bajariladi (agar u sozlangan bo‘lsa).
+
+## Server holati va portlar
+
+Pastki qatorda ping, CPU, RAM va disk doim ko‘rinib turadi. Bosganingizda oxirgi 30 daqiqa grafiklari va eng ko‘p
+resurs olayotgan jarayonlar chiqadi (keragini to‘xtatish mumkin).
+
+![Server holati](docs/stats.png)
+
+**Portlar (SSH tunnel).** Serverda faqat ichkarida ishlayotgan veb-panel yoki API kompyuteringiz brauzerida
+`http://127.0.0.1:<port>` da ochiladi. Pult serverda qaysi portlar ochiqligini ko‘rsatadi, ochilganlarni eslab qoladi.
+
+![Portlar](docs/ports.png)
+
+## AI agentlar: Claude Code va agy
+
+Serverda [Claude Code](https://code.claude.com) (`claude`) yoki Antigravity CLI (`agy`) o‘rnatilgan bo‘lsa, Pult ularni o‘zi topadi.
+
+- **Ruxsatga shu yerdan javob berasiz.** Claude buyruq bajarish uchun ruxsat so‘rasa, terminal tepasida
+  **Ruxsat berish** va **Rad etish** tugmalari chiqadi. Claude boshqa terminalda so‘rasa, so‘nggi qatorlari bilan kartochka
+  chiqadi: o‘sha terminalga o‘tmasdan javob berish mumkin.
+
+  ![Claude ruxsat so‘rayapti](docs/claude-ask.png)
+
+- **Har bir terminalda Claude holati:** ishlayapti, ruxsat so‘rayapti (**!**) yoki tugadi (**✓**). Boshqa oynada
+  bo‘lsangiz, Windows bildirishnomasi aniq yozadi: masalan, “Bash uchun ruxsat so‘rayapti”.
+- **Limitlar doim ko‘rinib turadi.** Pastki qatorda obunangizning 5 soatlik va haftalik limiti; bosganda batafsil:
+  qachon tiklanishi, joriy terminaldagi model va kontekst.
+- Birinchi marta pastki qatordagi **Claude → limitni ulash** ni bosing. Pult serverdagi `~/.claude/settings.json` ga kichik
+  status line skripti va hooklarni qo‘shadi (o‘zingizning status line’ingiz ishlashda davom etadi, eski fayl
+  `settings.json.pult-backup` bo‘lib saqlanadi). **Uzish** hammasini avvalgi holatiga qaytaradi.
+- agy limitlari `agy -p /usage` orqali o‘zi olinadi.
+- **Bir bosishda ishga tushirish** (`Ctrl+Shift+A`): Claude Code yoki agy yangi terminalda, joriy papkada; oxirgi suhbatni
+  davom ettirish ham bor. Fayllarda papka ustida o‘ng tugma → **Claude Code’ni shu yerda ochish**.
+- **Skrinshot va fayllar:** rasmni `Ctrl+V` bilan qo‘ysangiz yoki faylni terminalga sudrab tashlasangiz, u serverdagi
+  `~/.pult/uploads` ga yuklanadi va yo‘li yoziladi. `Shift+Enter` — yubormasdan yangi qator.
+
+![AI limitlari](docs/ai-limits.png)
+
+## Ko‘rinish
+
+Och korpus, vazifasiga qarab rangli tugmalar: **to‘q sariq** — asosiy amal yoki tanlangan rejim, **qora** — hozir
+qayerdasiz, **kulrang** — yordamchi tugmalar. Terminal har doim qora ekranda. Yorug‘ va qorong‘i mavzu; signal rangi
+(to‘q sariq, sariq, ko‘k, yashil) va korpus rangini Sozlamalarda tanlaysiz.
+
+## Xavfsizlik
+
+- Parollar va kalit parollari Windows himoyasi (DPAPI) bilan shifrlab saqlanadi.
+- Server kaliti birinchi ulanishda tasdiqlanadi. Keyin o‘zgarsa, Pult ulanmasdan oldin ogohlantiradi.
+  `~/.ssh/known_hosts` dagi kalitlar ham tan olinadi.
+- Kirish: parol, SSH kalit yoki ssh-agent. `~/.ssh/config` dan import qilish mumkin.
+- Pult serverda o‘z fayllarini faqat `~/.pult` papkasida saqlaydi. `~/.claude/settings.json` ni faqat siz
+  **limitni ulash** ni bosganda o‘zgartiradi.
 
 ## Klaviatura
 
 | Tugma | Vazifa |
 | --- | --- |
 | `Ctrl+Shift+T` / `Ctrl+Shift+W` | yangi terminal / terminalni yopish |
-| `Ctrl+Shift+1` `2` `3` | Terminal / Fayllar / Yonma-yon |
+| `Ctrl+Shift+1` `2` `3` `4` | Terminal / Fayllar / Yonma-yon / Tizim |
 | `Ctrl+Tab` | serverlar orasida o‘tish |
-| `Ctrl+PageUp/PageDown` | terminallar orasida o‘tish |
-| `Ctrl+Shift+A` | AI agent: Claude Code / agy ni yangi terminalda ochish, limitlar |
+| `Ctrl+PageUp` / `Ctrl+PageDown` | terminallar orasida o‘tish |
+| `Alt+1…9` | tez buyruqlar |
+| `Ctrl+Shift+A` | Claude Code / agy ni ishga tushirish, limitlar |
 | `Shift+Enter` | Claude Code / agy’da yangi qator (yubormasdan) |
 | `Ctrl+C` / `Ctrl+V` | belgilangan bo‘lsa nusxalash / qo‘yish (`Ctrl+Shift+C/V` ham ishlaydi) |
 | O‘ng tugma | belgilangan bo‘lsa nusxalash, aks holda qo‘yish |
-| `Shift` + sichqoncha bilan belgilash | sichqonchani o‘zi ushlaydigan dasturlarda (Claude CLI, vim, mc, htop) ham matnni belgilash |
+| `Shift` + sichqoncha | sichqonchani o‘zi ushlaydigan dasturlarda (Claude Code, vim, mc) ham matnni belgilash |
 | `Ctrl+Shift+F` | terminalda qidirish |
 | `Ctrl` + g‘ildirak | shrift o‘lchami |
 | `Ctrl+,` | sozlamalar |
 
-**Fayllarda:**
+**Fayllarda:** `Enter` ochish, `Backspace` yuqoriga, `F2` nomini o‘zgartirish, `Del` o‘chirish, `F5` yangilash,
+`Ctrl+L` yo‘lni yozish, `Ctrl+A` hammasi, `Ctrl+C` / `Ctrl+X` / `Ctrl+V` nusxalash / kesish / qo‘yish, `Ctrl+D` dublikat,
+`Ctrl+Shift+F` papka ichidan qidirish, `Alt+Enter` xususiyatlar.
 
-| Tugma | Vazifa |
-| --- | --- |
-| `Enter`, `Backspace`, `F2`, `Del`, `F5`, `Ctrl+L` | ochish, yuqoriga, nomini o‘zgartirish, o‘chirish, yangilash, yo‘lni yozish |
-| `Ctrl+A` | hammasini belgilash |
-| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | nusxalash / kesib olish / qo‘yish |
-| `Ctrl+D` | dublikat |
-| `Ctrl+Shift+F` | papka ichidan qidirish |
-| `Alt+Enter` | xususiyatlar |
-
-**Muharrirda:**
-
-| Tugma | Vazifa |
-| --- | --- |
-| `Ctrl+S` | saqlash |
-| `Ctrl+F` / `Ctrl+H` | qidirish / almashtirish |
-| `Ctrl+G` | qatorga o‘tish |
-| `Ctrl+Z` / `Ctrl+Y` | bekor qilish / qaytarish |
-| `Alt+Z` | qatorlarni o‘rash |
-| `Esc` | yopish |
-
-## Telefon versiyasi (Android)
-
-<p>
-  <img src="docs/mobile-home.png" width="200" alt="Serverlar">
-  <img src="docs/mobile-terminal.png" width="200" alt="Terminal">
-  <img src="docs/mobile-files.png" width="200" alt="Fayllar">
-  <img src="docs/mobile-editor.png" width="200" alt="Muharrir">
-</p>
-
-**O‘rnatish:** APK faylni telefonga o‘tkazing (Telegram “Saqlangan xabarlar”, kabel yoki Google Drive orqali) va oching.
-Telefon “Noma’lum manbalardan o‘rnatish”ga ruxsat so‘raydi — shu ilova (Telegram, Fayllar…) uchun ruxsat bering.
-Play Protect ogohlantirsa: **Baribir o‘rnatish**.
-
-**Kompyuterdagi Pult bilan bir xil:**
-- Bir xil dizayn, terminal + fayllar, ping/CPU/RAM.
-- **Sessiyalar umumiy.** Kompyuterda ochilgan `pult-0001` terminalini telefonda o‘sha holatida ko‘rasiz va aksincha (tmux).
-- Telefon ilovani fonga yuborsa yoki Wi-Fi ↔ mobil internet almashsa, ilova qaytganingizda darhol qayta ulanadi
-  va terminal qolgan joyidan davom etadi. Fayl uzatish ham qolgan joyidan davom etadi.
-- Serverdagi dasturlar (Claude CLI, tmux, vim) nusxalagan matn telefon buferiga tushadi.
-- Fayllarda: nusxalash/kesib olish/qo‘yish, dublikat, arxivlash va arxivni ochish, qidiruv, xususiyatlar.
-- Muharrir: kod ranglari, qator raqamlari, qidirish va almashtirish, qatorga o‘tish, bekor qilish/qaytarish.
-- **AI agentlar:** yuqori panel ostida Claude Code va agy limitlari (5 soatlik va haftalik); ✨ tugmasi —
-  Claude Code yoki agy ni yangi terminalda ochish (**oxirgi suhbat** ham), limitlar tafsiloti va Claude limitlarini ulash/uzish.
-  Terminal yorlig‘ida agent belgisi, boshqa terminalda signal bo‘lsa — nuqta. Agent ishlayotganda qo‘shimcha
-  tugmalarda `↵` (yangi qator, yubormasdan) va `📎` (rasm yoki faylni serverga yuborib, yo‘lini yozish).
-
-**Telefonga xos:**
-- Klaviatura ustida qo‘shimcha tugmalar: `Esc` `Tab` `Ctrl` `Alt` `← ↓ ↑ →` `- / | ~` `Home` `End` `PgUp` `PgDn`, qo‘yish.
-  `Ctrl` va `Alt` keyingi bitta tugmaga qo‘llanadi (masalan `Ctrl` → `c` = to‘xtatish).
-- Klaviaturadagi “Yuborish” (Enter) tugmasi buyruqni yuboradi.
-- Matnni belgilash: barmoqni bosib turing va suring → **Nusxalash** tugmasi chiqadi.
-- **Bir nechta faylni belgilash:** faylni bosib turing, so‘ng boshqalarini bosing — pastda amallar paneli chiqadi.
-- **SSH kalitni telefonning o‘zida yaratish:** server formasida “SSH kalit” → “Yangi kalit yaratish” →
-  “Ochiq kalitni nusxalash”, so‘ng uni kompyuterdagi Pult orqali serverdagi `~/.ssh/authorized_keys` fayliga qo‘shing.
-  (Serverda parol bilan kirish o‘chirilgan bo‘lsa, telefon uchun shu yo‘l kerak.)
-- Parollar va kalitlar Android Keystore’da shifrlab saqlanadi.
-- Yuklab olingan fayllar: `Download/Pult` papkasi.
-
-<img src="docs/mobile-select.png" width="200" alt="Bir nechta faylni belgilash">
+**Muharrirda:** `Ctrl+S` saqlash, `Ctrl+F` / `Ctrl+H` qidirish / almashtirish, `Ctrl+G` qatorga o‘tish,
+`Ctrl+Z` / `Ctrl+Y` bekor qilish / qaytarish, `Alt+Z` qatorlarni o‘rash, `Esc` yopish.
 
 ## Server talablari
 
-- SSH (OpenSSH yoki istalgan SFTP qo‘llaydigan server).
-- `tmux` — sessiyalar saqlanishi uchun (bo‘lmasa ham ishlaydi, faqat uzilganda sessiya saqlanmaydi).
-- Nusxalash, arxiv va qidiruv uchun oddiy Linux buyruqlari: `cp`, `mv`, `tar`, `find`, `grep`, `du`, `stat`.
-  `.zip` uchun `zip`/`unzip` yoki `python3` kerak — topilmasa, ilova buni aniq aytadi.
-- AI agentlar uchun qo‘shimcha hech narsa kerak emas: Pult o‘z fayllarini faqat serverdagi `~/.pult` papkasida saqlaydi
-  (status line skripti, limit ma’lumoti, yuklangan rasmlar).
+- SSH (OpenSSH yoki SFTP qo‘llaydigan istalgan server).
+- `tmux` — sessiyalar saqlanishi uchun. Bo‘lmasa ham ishlaydi, faqat uzilganda sessiya saqlanmaydi.
+- Fayl amallari uchun oddiy Linux buyruqlari: `cp`, `mv`, `tar`, `find`, `grep`, `du`, `stat`. `.zip` uchun `zip`/`unzip`
+  yoki `python3` kerak: topilmasa, Pult buni aniq aytadi.
+- **Tizim** bo‘limi uchun: `systemctl`, `journalctl`, `docker`, `df`, `du` (qaysi biri bo‘lsa, o‘sha qismi ishlaydi).
 
 ## Ishlab chiqish
 
 ```bash
 npm install
 npm start          # ilovani ishga tushirish
-npm run mock       # sinov uchun lokal SSH server (127.0.0.1:2222, demo/demo; ichida soxta `claude` va `agy` bor)
-npm run dist       # release uchun .exe yig‘ish
-MOCK_ROOT=<mock papka> node dev/agents-test.js   # AI agentlar: aniqlash, status line, limitlar (mock server kerak)
+npm run mock       # sinov uchun lokal SSH server: 127.0.0.1:2222, demo/demo
+npm run dist       # o‘rnatuvchi va portable .exe → dist/
+```
+
+Sinov serverida soxta `claude`, `agy`, systemd xizmatlari, Docker konteynerlari, disk va loglar bor: Pult’ning hamma
+qismini haqiqiy serversiz sinash mumkin. Linux’da `.exe` yig‘ish uchun `wine` va `wine32` kerak.
+
+Boshqa vositalar (`MOCK_ROOT=<papka>` bilan, sinov serveri ishlab turganda):
+
+```bash
+node dev/xfer-test.js <papka>    # fayl uzatish: aloqa uzilganda davom etishi va baytma-bayt to‘g‘riligi
+node dev/agents-test.js          # AI agentlar: aniqlash, status line, limitlar
+node dev/fsops-test.js           # serverdagi fayl amallari
+xvfb-run electron dev/shot.js <ssenariy> <papka> --no-sandbox   # avtomatik ekran rasmlari
 ```
 
 Muharrir (CodeMirror 6) bitta faylga yig‘ilgan: `src/renderer/vendor/codemirror.js`. Uni yangilash uchun:
+`cd dev/editor-bundle && npm install && npm run build`.
 
-```bash
-cd dev/editor-bundle
-npm install
-npm run build
-```
-
-Telefon versiyasi (`mobile/`, Flutter):
-
-```bash
-flutter test test/core_test.dart --dart-define=MOCK_ROOT=<mock papka>   # SSH yadrosi testlari (mock server kerak)
-flutter test test/agents_test.dart                                       # AI agentlar: limitlarni o‘qish, skript desktop bilan bir xil
-flutter test test/screens_test.dart --update-goldens                    # ekran rasmlari: test/shots
-flutter build apk --release --target-platform android-arm,android-arm64
-```
-
-APK’ni imzolash uchun `mobile/android/key.properties` va kalit fayli kerak (ular repoda yo‘q).
-Ularsiz `flutter build apk --debug` bilan sinov versiyasini yig‘ish mumkin.
-
-Tuzilishi: `src/main` — SSH ulanish, qayta ulanish, SFTP uzatish, serverdagi fayl amallari (Node.js);
-`src/renderer` — interfeys; `dev/` — sinov serveri, testlar va avtomatik skrinshot vositalari;
-`mobile/lib/core` — telefon uchun xuddi shu mantiq (Dart), `mobile/lib/ui` — telefon interfeysi.
+**Tuzilishi:**
+- `src/main` — SSH ulanish va qayta ulanish, SFTP uzatish, serverdagi fayl amallari, Tizim bo‘limi buyruqlari, AI agentlar (Node.js).
+- `src/renderer` — interfeys.
+- `dev/` — sinov serveri, testlar va skrinshot vositalari.
 
 ## Litsenziya
 

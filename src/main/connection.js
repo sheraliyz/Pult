@@ -7,6 +7,7 @@
 
 const { Client, utils } = require('ssh2');
 const EventEmitter = require('events');
+const { StringDecoder } = require('string_decoder');
 const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
@@ -43,7 +44,7 @@ function tmuxScript(name, cols, rows) {
     'set -ga terminal-overrides ",xterm*:smcup@:rmcup@:Tc"',
     'set -g focus-events on',
   ].join(' \\; ');
-  const create = `$T new-session -d -s "$S" -x ${cols} -y ${rows}`;
+  const create = `$T set -g history-limit 20000 \\; new-session -d -s "$S" -x ${cols} -y ${rows}`;
   // Re-applied on every attach (idempotent), each on its own so an option an
   // older tmux lacks cannot block the others. Lets programs inside tmux copy
   // to the Windows clipboard through Pult (OSC 52).
@@ -145,7 +146,9 @@ class Connection extends EventEmitter {
     this.sftpPromise = null;
     this.monitor = null;
     this.monitorTimer = null;
-    this.pingSentAt = 0;
+    this.pingTimes = []; // send times of unanswered pings (answered in order)
+    this.pingSlots = []; // [{ at, min }]: lowest ping per 30 s, for quietPing()
+    this.fastPingTimer = null;
     this.rtt = null;
     this.cpuPrev = null;
     this.stats = {};
@@ -377,6 +380,7 @@ class Connection extends EventEmitter {
 
     const wasReady = this.everReady;
     this.everReady = true;
+    this.pingSlots = []; // a new link may take another path
     this.setState('ready');
 
     for (const w of this.waiters.splice(0)) w.resolve();
@@ -479,6 +483,7 @@ class Connection extends EventEmitter {
 
   close() {
     this.closed = true;
+    this.setFastPing(false);
     clearTimeout(this.retryTimer);
     this.stopMonitor();
     for (const w of this.waiters.splice(0)) w.reject(new Error('Ulanish yopilgan'));
@@ -512,6 +517,50 @@ class Connection extends EventEmitter {
         stream.on('close', () => {
           clearTimeout(timer);
           resolve({ code, stdout, stderr });
+        });
+      });
+    });
+  }
+
+  /**
+   * A long-running command whose output arrives as it comes (live logs).
+   * stdout and stderr are merged. close() ends it: the command runs under a
+   * watcher that kills it when the channel's stdin closes, so a quiet
+   * `tail -F` does not linger on the server.
+   */
+  stream(script, { onData, onEnd }) {
+    const client = this.client;
+    if (!client || this.state !== 'ready') return Promise.reject(Object.assign(new Error('Server bilan aloqa yo‘q'), { code: 'NOT_CONNECTED' }));
+    const wrapped = `{ ${script} ; } 2>&1 & P=$!; cat >/dev/null; kill $P 2>/dev/null; pkill -P $P 2>/dev/null; true`;
+    return new Promise((resolve, reject) => {
+      client.exec(`sh -c ${shq(wrapped)}`, (err, stream) => {
+        if (err) return reject(err);
+        const out = new StringDecoder('utf8');
+        let code = null;
+        let ended = false;
+        stream.on('data', (d) => onData(out.write(d)));
+        stream.stderr.on('data', (d) => onData(String(d)));
+        stream.on('exit', (c) => (code = c));
+        stream.on('close', () => {
+          if (ended) return;
+          ended = true;
+          onEnd(code);
+        });
+        resolve({
+          close: () => {
+            try {
+              stream.end(); // stdin EOF: the watcher stops the command
+            } catch {
+              // already closed
+            }
+            setTimeout(() => {
+              try {
+                stream.close();
+              } catch {
+                // already closed
+              }
+            }, 300);
+          },
         });
       });
     });
@@ -640,6 +689,18 @@ class Connection extends EventEmitter {
     }
   }
 
+  /**
+   * Earlier output of a tmux session (above the visible screen), with colours,
+   * wrapped lines joined. Shown before re-attaching so the scrollback is not
+   * lost when Pult restarts or another device opens the same terminal.
+   */
+  async history(session, lines = 3000) {
+    if (!SESSION_RE.test(session) || this.state !== 'ready') return '';
+    const n = Math.max(100, Math.min(10000, Number(lines) || 3000));
+    const r = await this.exec(`${TMUX} capture-pane -p -e -J -S -${n} -E -1 -t ${session} 2>/dev/null; true`, 15000);
+    return r.stdout || '';
+  }
+
   /* ---------------- sftp ---------------- */
 
   // wait=true: transfers block until the link is back; UI calls fail fast.
@@ -692,6 +753,7 @@ class Connection extends EventEmitter {
       stream.on('close', () => {
         if (this.monitor !== stream) return;
         this.monitor = null;
+        this.pingTimes = [];
         this.fetchBuf = null;
         for (const f of this.fetches.splice(0)) f(null);
       });
@@ -713,9 +775,42 @@ class Connection extends EventEmitter {
   }
 
   ping() {
-    if (!this.monitor?.writable) return;
-    this.pingSentAt = Date.now();
+    // A few may be outstanding when the link is slow; replies come in order.
+    if (!this.monitor?.writable || this.pingTimes.length >= 4) return;
+    this.pingTimes.push(Date.now());
     this.monitor.write('p\n');
+  }
+
+  notePing(rtt) {
+    const now = Date.now();
+    const slot = this.pingSlots[this.pingSlots.length - 1];
+    if (!slot || now - slot.at > 30000) {
+      this.pingSlots.push({ at: now, min: rtt });
+      if (this.pingSlots.length > 6) this.pingSlots.shift();
+    } else {
+      slot.min = Math.min(slot.min, rtt);
+    }
+  }
+
+  /** The ping of this link with nothing queued: the lowest of the last 3 minutes (also before a transfer started). */
+  quietPing() {
+    let min = Infinity;
+    for (const s of this.pingSlots) min = Math.min(min, s.min);
+    return min;
+  }
+
+  /**
+   * Ping every 250 ms while files move, so the transfer pacer (transfers.js)
+   * sees at once when the link's queue grows and the terminal would lag.
+   */
+  setFastPing(on) {
+    if (on && !this.fastPingTimer) {
+      this.fastPingTimer = setInterval(() => this.ping(), 250);
+      this.fastPingTimer.unref?.();
+    } else if (!on && this.fastPingTimer) {
+      clearInterval(this.fastPingTimer);
+      this.fastPingTimer = null;
+    }
   }
 
   tick() {
@@ -769,10 +864,15 @@ class Connection extends EventEmitter {
     const [kind, ...rest] = line.trim().split(/\s+/);
     const nums = rest.map(Number);
     switch (kind) {
-      case 'p':
+      case 'p': {
+        const sent = this.pingTimes.shift();
+        if (!sent) break;
         this.lastPong = Date.now();
-        this.rtt = this.lastPong - this.pingSentAt;
+        this.rtt = this.lastPong - sent;
+        this.notePing(this.rtt);
+        this.emit('pong', this.rtt);
         break;
+      }
       case 'cpu': {
         const total = nums.reduce((a, b) => a + (b || 0), 0);
         const idle = (nums[3] || 0) + (nums[4] || 0);

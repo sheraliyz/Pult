@@ -2,19 +2,10 @@
 node_modules/
 .tools/
 
-# Build output (installers and the APK go to GitHub Releases, not the repo)
+# Build output (installers go to GitHub Releases, not the repo)
 dist/
 release/
 *.blockmap
-
-# Android signing key: NEVER commit (updates must be signed with it)
-key.properties
-*.jks
-*.keystore
-
-# Gradle / Kotlin caches
-.gradle/
-.kotlin/
 
 # Editors / OS
 .idea/
@@ -24,6 +15,6 @@ key.properties
 Thumbs.db
 *.log
 
-# Dev harness output (mobile/test/shots are golden files: keep them)
+# Dev harness output
 /shots/
 /ui-shots/

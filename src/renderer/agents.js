@@ -249,7 +249,7 @@ function claudeSection(session, c) {
         'p',
         { class: 'ai-text' },
         'Obunangiz limitlari (5 soatlik va haftalik) shu yerda doim ko‘rinib turishi uchun Pult serverdagi Claude Code’ga kichik status line skriptini ulaydi. ',
-        'O‘zingizning status line’ingiz bo‘lsa, u ham ishlashda davom etadi. Claude ishni tugatganda yoki ruxsat so‘raganda terminal signal beradi — Pult buni bildirishnoma qilib ko‘rsatadi.',
+        'O‘zingizning status line’ingiz bo‘lsa, u ham ishlashda davom etadi. Har bir terminalda Claude nima qilayotgani (ishlayapti, ruxsat so‘rayapti, tugadi) ham ko‘rinadi va bildirishnoma keladi.',
       ),
       h('p', { class: 'ai-note muted' }, '~/.claude/settings.json o‘zgaradi (avvalgi nusxasi saqlanadi). Istalgan vaqtda shu yerdan uzib qo‘yish mumkin.'),
       h(
@@ -279,6 +279,22 @@ function claudeSection(session, c) {
   const snap = view?.attach ? c.sessions?.[view.attach] : null;
   const facts = snap ? [snap.model, snap.ctx != null ? `kontekst ${Math.round(snap.ctx)}%` : null, snap.cost != null ? `$${snap.cost.toFixed(2)}` : null].filter(Boolean) : [];
 
+  const offerHooks =
+    !c.hooks &&
+    h(
+      'div',
+      { class: 'ai-offer' },
+      h('p', { class: 'ai-text' }, 'Yangi: har bir terminalda Claude nima qilayotgani — ishlayapti, ruxsat so‘rayapti yoki tugadi — ko‘rinadi, bildirishnoma ham aniq bo‘ladi.'),
+      h(
+        'div',
+        { class: 'ai-actions' },
+        busyBtn('Yoqish', 'btn-primary', async () => {
+          await call('agents:installClaude', session.id);
+          toast('Yoqildi — Claude’ning keyingi xabaridan boshlab holati ko‘rinadi', 'ok', 4000);
+        }),
+      ),
+    );
+
   return h(
     'div',
     { class: 'ai-sec' },
@@ -296,6 +312,7 @@ function claudeSection(session, c) {
       : h('p', { class: 'ai-text muted' }, c.seen ? 'Bu hisobda obuna limitlari yo‘q — ular faqat Pro/Max obunada bo‘ladi (API kalit bilan cheklov yo‘q).' : 'Hali ma’lumot yo‘q: Claude Code’da bitta xabar yuboring — limitlar birinchi javobdan keyin chiqadi.'),
     u && Date.now() - u.t > STALE_MS && h('p', { class: 'ai-note muted' }, 'Ma’lumot Claude Code oxirgi marta javob berganda olingan; boshqa qurilmadagi ishlatish keyingi javobda qo‘shiladi.'),
     facts.length > 0 && h('div', { class: 'ai-facts' }, icon('terminal', 13), h('span', null, facts.join(' · '))),
+    offerHooks,
   );
 }
 

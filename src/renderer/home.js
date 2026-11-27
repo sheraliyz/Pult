@@ -1,7 +1,7 @@
 // Server list (start screen) and the add / edit server form.
 
 import { call } from './api.js';
-import { h, icon, clear, fmt } from './dom.js';
+import { h, icon, clear, fmt, initials } from './dom.js';
 import { modal, menu, toast, confirmDialog, field, segmented, toggleRow, passwordInput } from './ui.js';
 
 const COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
@@ -30,7 +30,7 @@ export class Home {
     const servers = this.app.servers;
     const importBtn =
       this.app.info.sshConfigHosts > 0 &&
-      h('button', { class: 'btn btn-ghost', type: 'button', 'data-tip': '~/.ssh/config fayldan', onclick: () => this.importConfig() }, icon('import', 15), 'Import');
+      h('button', { class: 'btn', type: 'button', 'data-tip': '~/.ssh/config fayldan', onclick: () => this.importConfig() }, icon('import', 15), 'Import');
 
     const header = h(
       'div',
@@ -50,6 +50,8 @@ export class Home {
 
     clear(
       this.el,
+      // No title bar any more: this strip lets the window be dragged from the top.
+      h('div', { class: 'home-drag', 'aria-hidden': 'true' }),
       h(
         'div',
         { class: 'home-inner' },
@@ -98,7 +100,7 @@ export class Home {
     const el = h(
       'div',
       { class: 'srv', tabindex: '0', role: 'button', onclick: () => this.app.openServer(s) },
-      h('div', { class: 'srv-avatar' }, (s.name || s.host).trim().charAt(0).toUpperCase()),
+      h('div', { class: 'srv-avatar', 'aria-hidden': 'true' }, initials(s.name || s.host)),
       h(
         'div',
         { class: 'srv-main' },

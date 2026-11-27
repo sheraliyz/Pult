@@ -39,37 +39,17 @@ const THEMES = {
     brightCyan: '#67e8f9',
     brightWhite: '#fafafa',
   },
-  light: {
-    background: '#ffffff',
-    foreground: '#18181b',
-    cursor: '#18181b',
-    cursorAccent: '#ffffff',
-    selectionBackground: 'rgba(0,0,0,0.13)',
-    selectionInactiveBackground: 'rgba(0,0,0,0.07)',
-    scrollbarSliderBackground: 'rgba(0,0,0,0.08)',
-    scrollbarSliderHoverBackground: 'rgba(0,0,0,0.16)',
-    scrollbarSliderActiveBackground: 'rgba(0,0,0,0.22)',
-    black: '#18181b',
-    red: '#dc2626',
-    green: '#16a34a',
-    yellow: '#a16207',
-    blue: '#2563eb',
-    magenta: '#9333ea',
-    cyan: '#0e7490',
-    white: '#71717a',
-    brightBlack: '#52525b',
-    brightRed: '#ef4444',
-    brightGreen: '#22c55e',
-    brightYellow: '#ca8a04',
-    brightBlue: '#3b82f6',
-    brightMagenta: '#a855f7',
-    brightCyan: '#0891b2',
-    brightWhite: '#a1a1aa',
-  },
 };
 
 const darkQuery = matchMedia('(prefers-color-scheme: dark)');
-const currentTheme = () => (darkQuery.matches ? THEMES.dark : THEMES.light);
+
+// The terminal is always a black screen set into the light (or dark) chassis;
+// only the cursor follows the signal colour chosen in the settings.
+const SCREEN = '#0a0a0b';
+function currentTheme() {
+  const signal = getComputedStyle(document.documentElement).getPropertyValue('--signal').trim() || '#ff5a1f';
+  return { ...THEMES.dark, background: SCREEN, cursor: signal, cursorAccent: SCREEN, selectionBackground: 'rgba(255,255,255,0.2)' };
+}
 
 const SEARCH_DECORATIONS = {
   matchBackground: '#facc1555',
@@ -111,7 +91,7 @@ export class TermView {
       scrollback: settings.scrollback,
       allowProposedApi: true,
       drawBoldTextInBrightColors: false,
-      minimumContrastRatio: darkQuery.matches ? 1 : 4.5,
+      minimumContrastRatio: 1,
       rightClickSelectsWord: false,
       smoothScrollDuration: 0,
       theme: currentTheme(),
@@ -183,10 +163,24 @@ export class TermView {
 
   async start(attach) {
     this.open();
+    if (attach && this.settings.restoreHistory !== false) await this.restoreHistory(attach);
     const { cols, rows } = this.term;
     const r = await call('shell:open', this.session.id, this.id, { cols, rows, attach });
     this.persistent = r.persistent;
     this.attach = r.session;
+  }
+
+  /**
+   * Re-attaching an existing tmux session only redraws its visible screen:
+   * put the lines above it into the scrollback first, then leave the viewport
+   * empty for tmux to paint.
+   */
+  async restoreHistory(session) {
+    const text = await call('shell:history', this.session.id, session, 3000).catch(() => '');
+    if (!text || !text.trim()) return;
+    // Trailing padding (also before a closing colour code) would wrap in a narrower window.
+    const lines = text.replace(/\n$/, '').split('\n').map((l) => l.replace(/ +((?:\x1b\[[0-9;]*m)*)$/, '$1'));
+    this.term.write(`${lines.join('\r\n')}\x1b[0m\r\n${'\r\n'.repeat(this.term.rows)}\x1b[H`);
   }
 
   fitNow() {
@@ -200,6 +194,17 @@ export class TermView {
 
   focus() {
     if (this.opened) this.term.focus();
+  }
+
+  /** The last non-empty lines on screen (a preview of what the program asks). */
+  lastLines(n = 4) {
+    const b = this.term.buffer.active;
+    const out = [];
+    for (let y = b.baseY + b.cursorY; y >= 0 && out.length < n; y--) {
+      const text = b.getLine(y)?.translateToString(true).trimEnd();
+      if (text && /\S/.test(text) && !/^[─━\-_=\s]+$/.test(text)) out.unshift(text.slice(0, 160));
+    }
+    return out;
   }
 
   dispose() {
@@ -466,7 +471,7 @@ export class TermView {
         h('div', { class: 'te-title' }, 'Sessiya yakunlandi'),
         h('div', { class: 'te-actions' },
           h('button', { class: 'btn btn-primary', type: 'button', onclick: () => this.reopen() }, icon('refresh', 15), 'Qayta ochish'),
-          h('button', { class: 'btn', type: 'button', onclick: () => this.session.closeShell(this) }, 'Yopish'),
+          h('button', { class: 'btn', type: 'button', onclick: () => this.session.closeShell(this, { confirm: false }) }, 'Yopish'),
         ),
       ),
     );
@@ -487,7 +492,6 @@ export class TermView {
 
   applyTheme() {
     this.term.options.theme = currentTheme();
-    this.term.options.minimumContrastRatio = darkQuery.matches ? 1 : 4.5;
   }
 }
 
