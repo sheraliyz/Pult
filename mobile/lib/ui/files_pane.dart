@@ -13,6 +13,7 @@ import '../core/fsops.dart';
 import '../theme.dart';
 import 'editor_page.dart';
 import 'file_kinds.dart';
+import 'image_viewer.dart';
 import 'widgets.dart';
 
 String? _validName(String v) {
@@ -33,7 +34,7 @@ Future<T?> runBusy<T>(BuildContext context, String label, Future<T> Function() f
   m?.showSnackBar(SnackBar(
     duration: const Duration(minutes: 30),
     content: Row(children: [
-      SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: p.bg)),
+      SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: p.signal)),
       const SizedBox(width: 12),
       Text(label),
     ]),
@@ -66,6 +67,8 @@ class FilesPane extends StatelessWidget {
         if (context.mounted) toast(context, classify(err).message, error: true);
         return false;
       });
+    } else if (isViewableImage(e.name)) {
+      _view(context, e);
     } else if (_binaryKinds.contains(kindOf(e))) {
       _actions(context, e);
     } else {
@@ -94,6 +97,15 @@ class FilesPane extends StatelessWidget {
   }
 
   Future<void> _edit(BuildContext context, String path, {int? size}) => openEditor(context, session, path, size: size);
+
+  /// Pictures open in the app; swipe for the others in this folder.
+  void _view(BuildContext context, Entry e) {
+    final pics = files.visible.where((x) => !x.isDir && isViewableImage(x.name)).toList();
+    final start = pics.indexWhere((x) => x.name == e.name);
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => ImageViewerPage(files: files, entries: pics, start: start < 0 ? 0 : start, onDownload: (path) => download(context, session, [path])),
+    ));
+  }
 
   static Future<void> download(BuildContext context, Session session, List<String> paths) async {
     final dir = await session.app.downloadDir();
@@ -207,6 +219,7 @@ class FilesPane extends StatelessWidget {
     final archive = !e.isDir && isArchiveName(e.name);
     showActions(context, title: e.name, subtitle: '${kindLabel(kind)} · ${files.path(e)}', actions: [
       if (e.isDir) SheetAction('Ochish', Icons.folder_open_rounded, () => _open(context, e)),
+      if (!e.isDir && isViewableImage(e.name)) SheetAction('Ko‘rish', Icons.image_outlined, () => _view(context, e)),
       if (!e.isDir && !_binaryKinds.contains(kind)) SheetAction('Tahrirlash', Icons.edit_outlined, () => _edit(context, files.path(e), size: e.size)),
       if (e.isDir) SheetAction('Terminalda ochish', Icons.terminal_rounded, () => _cd(files.path(e))),
       if (archive) SheetAction('Shu yerga ochish', Icons.unarchive_outlined, () => _extract(context, e, 'here')),
@@ -354,10 +367,11 @@ class FilesPane extends StatelessWidget {
                 })),
           SizedBox(
             height: 2,
-            child: files.loading ? LinearProgressIndicator(minHeight: 1.5, backgroundColor: p.line, color: p.fg2) : Divider(color: p.line, height: 1),
+            child: files.loading ? LinearProgressIndicator(minHeight: 2, backgroundColor: p.line, color: p.signal) : Divider(color: p.line2, height: 1.4, thickness: 1.4),
           ),
           if (showClip) _ClipBar(clip: clip, onPaste: () => paste(context, session), onCancel: () => app.setClip(null)),
-          Expanded(child: RefreshIndicator(color: p.fg, backgroundColor: p.bg2, onRefresh: files.refresh, child: body)),
+          Expanded(child: RefreshIndicator(color: p.ink, backgroundColor: p.paper, onRefresh: files.refresh, child: body)),
+          if (!files.selecting && files.loaded) _Footer(files: files),
           if (files.selecting)
             _SelectionActions(
               onCopy: () => _copy(context, files.selectedEntries, cut: false),
@@ -405,28 +419,59 @@ class _PathBarState extends State<_PathBar> {
       if (_scroll.hasClients) _scroll.jumpTo(_scroll.position.maxScrollExtent);
     });
     final parts = cwd.split('/').where((s) => s.isNotEmpty).toList();
-    Widget crumb(String label, String target, bool current) => InkWell(
-          borderRadius: BorderRadius.circular(7),
-          onTap: () => widget.onGo(target),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
-            child: Text(label, style: TextStyle(color: current ? p.fg : p.fg2, fontWeight: current ? FontWeight.w600 : FontWeight.w400, fontSize: 14)),
-          ),
+    // Path pieces are keys: the folder you are in is ink, the rest light.
+    Widget crumb(String label, String target, bool current) => KeyCap(
+          tone: current ? KeyTone.ink : KeyTone.light,
+          height: 34,
+          radius: 9,
+          depth: 2,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          onTap: current ? widget.files.refresh : () => widget.onGo(target),
+          child: Text(label, style: const TextStyle(fontFamily: kMono, fontSize: 13.5, fontWeight: FontWeight.w600)),
         );
     final crumbs = <Widget>[crumb('/', '/', parts.isEmpty)];
     var acc = '';
     for (var i = 0; i < parts.length; i++) {
       acc += '/${parts[i]}';
-      if (i > 0) crumbs.add(Text('/', style: TextStyle(color: p.fg3)));
+      crumbs.add(Padding(padding: const EdgeInsets.symmetric(horizontal: 4), child: Text('/', style: TextStyle(color: p.ink3, fontWeight: FontWeight.w600))));
       crumbs.add(crumb(parts[i], acc, i == parts.length - 1));
     }
     return SizedBox(
-      height: 48,
+      height: 56,
       child: Row(children: [
-        IconBtn(Icons.arrow_upward_rounded, tip: 'Yuqori papka', size: 20, onTap: cwd == '/' || cwd.isEmpty ? null : () => widget.onGo(pDirname(cwd))),
-        Expanded(child: SingleChildScrollView(controller: _scroll, scrollDirection: Axis.horizontal, child: Row(children: crumbs))),
+        const SizedBox(width: 10),
+        KeyIcon(Icons.arrow_upward_rounded, tip: 'Yuqori papka', size: 36, iconSize: 18, onTap: cwd == '/' || cwd.isEmpty ? null : () => widget.onGo(pDirname(cwd))),
         const SizedBox(width: 8),
+        Expanded(
+          child: SingleChildScrollView(
+            controller: _scroll,
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.only(right: 10, top: 2),
+            child: Row(children: crumbs),
+          ),
+        ),
       ]),
+    );
+  }
+}
+
+/// "17 ta element · 2 ta papka · 1 ta yashirin" under the list.
+class _Footer extends StatelessWidget {
+  const _Footer({required this.files});
+  final FilesController files;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.pal;
+    final all = files.entries;
+    final dirs = all.where((e) => e.isDir).length;
+    final hidden = all.where((e) => e.hidden).length;
+    final parts = ['${files.visible.length} ta element', if (dirs > 0) '$dirs ta papka', if (hidden > 0 && !files.showHidden) '$hidden ta yashirin'];
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 7, 16, 8),
+      decoration: BoxDecoration(border: Border(top: BorderSide(color: p.line2, width: 1.4))),
+      child: Text(parts.join(' · '), style: TextStyle(color: p.ink2, fontSize: 12.5, fontWeight: FontWeight.w500)),
     );
   }
 }
@@ -437,15 +482,18 @@ class _SelectionBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final p = context.pal;
     final all = files.selected.length >= files.visible.length;
     return SizedBox(
-      height: 48,
+      height: 56,
       child: Row(children: [
-        IconBtn(Icons.close_rounded, tip: 'Bekor qilish', size: 21, color: p.fg, onTap: files.clearSelection),
-        Expanded(child: Text('${files.selected.length} ta tanlandi', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600))),
-        TextButton(onPressed: all ? files.clearSelection : files.selectAll, child: Text(all ? 'Hech qaysi' : 'Hammasi', style: TextStyle(color: p.fg))),
+        const SizedBox(width: 10),
+        KeyIcon(Icons.close_rounded, tip: 'Bekor qilish', tone: KeyTone.light, size: 36, iconSize: 19, onTap: files.clearSelection),
+        const SizedBox(width: 12),
+        Text('${files.selected.length}', style: dotStyle(22, color: context.pal.ink)),
         const SizedBox(width: 6),
+        const Expanded(child: Text('ta tanlandi', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600))),
+        Btn(all ? 'Hech qaysi' : 'Hammasi', small: true, onTap: all ? files.clearSelection : files.selectAll),
+        const SizedBox(width: 10),
       ]),
     );
   }
@@ -459,24 +507,29 @@ class _SelectionActions extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = context.pal;
     Widget action(IconData icon, String label, VoidCallback onTap, {bool danger = false}) => Expanded(
-          child: InkWell(
-            onTap: onTap,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 3),
+            child: KeyCap(
+              tone: danger ? KeyTone.danger : KeyTone.light,
+              height: 54,
+              radius: 10,
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              onTap: onTap,
               child: Column(mainAxisSize: MainAxisSize.min, children: [
-                Icon(icon, size: 21, color: danger ? p.err : p.fg),
-                const SizedBox(height: 4),
-                Text(label, style: TextStyle(fontSize: 11.5, color: danger ? p.err : p.fg2)),
+                Icon(icon, size: 19),
+                const SizedBox(height: 3),
+                FittedBox(fit: BoxFit.scaleDown, child: Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600))),
               ]),
             ),
           ),
         );
     return Container(
-      decoration: BoxDecoration(color: p.bg2, border: Border(top: BorderSide(color: p.line))),
+      padding: const EdgeInsets.fromLTRB(7, 8, 7, 6),
+      decoration: BoxDecoration(color: p.rail, border: Border(top: BorderSide(color: p.stroke, width: 1.4))),
       child: Row(children: [
         action(Icons.copy_rounded, 'Nusxalash', onCopy),
         action(Icons.content_cut_rounded, 'Kesish', onCut),
-        action(Icons.archive_outlined, 'Arxivlash', onArchive),
+        action(Icons.archive_outlined, 'Arxiv', onArchive),
         action(Icons.download_rounded, 'Yuklab olish', onDownload),
         action(Icons.delete_outline_rounded, 'O‘chirish', onDelete, danger: true),
       ]),
@@ -494,21 +547,55 @@ class _ClipBar extends StatelessWidget {
     final p = context.pal;
     final what = clip.items.length == 1 ? '“${clip.items.first.name}”' : '${clip.items.length} ta element';
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, 8, 12, 2),
-      padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
-      decoration: BoxDecoration(color: p.bg2, borderRadius: BorderRadius.circular(12), border: Border.all(color: p.line2)),
+      margin: const EdgeInsets.fromLTRB(10, 8, 10, 2),
+      padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
+      decoration: BoxDecoration(color: p.well, borderRadius: BorderRadius.circular(12), border: Border.all(color: p.line2, width: 1.4)),
       child: Row(children: [
-        Icon(clip.cut ? Icons.content_cut_rounded : Icons.copy_rounded, size: 16, color: p.fg3),
+        Icon(clip.cut ? Icons.content_cut_rounded : Icons.copy_rounded, size: 17, color: p.ink2),
         const SizedBox(width: 10),
-        Expanded(child: Text(what, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: p.fg2, fontSize: 13))),
-        TextButton.icon(
-          onPressed: onPaste,
-          icon: Icon(Icons.content_paste_rounded, size: 17, color: p.accentFg),
-          label: Text('Qo‘yish', style: TextStyle(color: p.accentFg, fontWeight: FontWeight.w600)),
-          style: TextButton.styleFrom(backgroundColor: p.accent, padding: const EdgeInsets.symmetric(horizontal: 12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9))),
-        ),
-        IconBtn(Icons.close_rounded, size: 18, onTap: onCancel),
+        Expanded(child: Text(what, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: p.ink, fontSize: 13.5, fontWeight: FontWeight.w500))),
+        Btn('Qo‘yish', icon: Icons.content_paste_rounded, kind: BtnKind.primary, small: true, onTap: onPaste),
+        IconBtn(Icons.close_rounded, size: 19, onTap: onCancel),
       ]),
+    );
+  }
+}
+
+/// The file type on a key, as on the desktop: "/" for folders, the extension
+/// ("mp4", "sql", "js") for files, with a stripe in the type's colour.
+class KindBadge extends StatelessWidget {
+  const KindBadge({super.key, required this.entry, this.size = 40});
+  final Entry entry;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.pal;
+    final e = entry;
+    final kind = kindOf(e);
+    var label = '/';
+    if (!e.isDir) {
+      final dot = e.name.lastIndexOf('.');
+      final ext = dot > 0 && dot < e.name.length - 1 ? e.name.substring(dot + 1).toLowerCase() : '';
+      label = ext.isEmpty || ext.length > 5 ? (kind == FileKind.script ? 'sh' : '·') : ext;
+    }
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: e.isDir ? p.key2 : p.input,
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: p.stroke, width: 1.4),
+        boxShadow: [BoxShadow(color: p.keyShadow, offset: const Offset(0, 2))],
+      ),
+      child: e.isDir
+          ? Text('/', style: TextStyle(fontFamily: kMono, fontSize: size * 0.46, fontWeight: FontWeight.w700, color: p.ink, height: 1))
+          : Column(mainAxisSize: MainAxisSize.min, children: [
+              Text(label, maxLines: 1, style: TextStyle(fontFamily: kMono, fontSize: label.length > 3 ? 10 : 11.5, fontWeight: FontWeight.w700, color: p.ink, height: 1.1)),
+              const SizedBox(height: 3),
+              Container(width: size * 0.42, height: 3, decoration: BoxDecoration(color: kindColor(kind, dark: p.isDark), borderRadius: BorderRadius.circular(2))),
+            ]),
     );
   }
 }
@@ -523,23 +610,16 @@ class _Row extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = context.pal;
     final e = entry;
-    final kind = kindOf(e);
-    final color = kindColor(kind, dark: p.isDark);
-    final meta = e.isDir ? 'Papka · ${fmtDate(e.mtime)}' : '${fmtBytes(e.size)} · ${fmtDate(e.mtime)}';
+    final meta = e.isDir ? 'papka · ${fmtDate(e.mtime)}' : '${fmtBytes(e.size)} · ${fmtDate(e.mtime)}';
     return Material(
-      color: selected ? p.active : Colors.transparent,
+      color: selected ? p.signal.withValues(alpha: 0.22) : Colors.transparent,
       child: InkWell(
         onTap: onTap,
         onLongPress: onLongPress,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 9, 4, 9),
+          padding: const EdgeInsets.fromLTRB(14, 8, 4, 8),
           child: Row(children: [
-            Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(color: color.withValues(alpha: p.isDark ? 0.14 : 0.11), borderRadius: BorderRadius.circular(10)),
-              child: Icon(kindIcon(kind), size: 20, color: color),
-            ),
+            KindBadge(entry: e),
             const SizedBox(width: 13),
             Expanded(
               child: Opacity(
@@ -547,23 +627,28 @@ class _Row extends StatelessWidget {
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Row(children: [
                     Flexible(
-                      child: Text(e.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 15, fontWeight: e.isDir ? FontWeight.w600 : FontWeight.w400)),
+                      child: Text(e.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 15.5, fontWeight: e.isDir ? FontWeight.w700 : FontWeight.w500, color: p.ink)),
                     ),
-                    if (e.type == EntryType.link) ...[const SizedBox(width: 6), Icon(Icons.link_rounded, size: 14, color: p.fg3)],
+                    if (e.type == EntryType.link) ...[const SizedBox(width: 6), Icon(Icons.link_rounded, size: 15, color: p.ink3)],
                   ]),
                   const SizedBox(height: 2),
-                  Text(meta, style: TextStyle(color: p.fg3, fontSize: 12)),
+                  Text(meta, style: TextStyle(color: p.ink3, fontSize: 12.5)),
                 ]),
               ),
             ),
             if (selecting)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Icon(selected ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded, size: 22, color: selected ? p.fg : p.line2),
+                child: Container(
+                  width: 24,
+                  height: 24,
+                  decoration: BoxDecoration(color: selected ? p.ink : p.input, borderRadius: BorderRadius.circular(7), border: Border.all(color: p.stroke, width: 1.4)),
+                  child: selected ? Icon(Icons.check_rounded, size: 17, color: p.onInk) : null,
+                ),
               )
             else ...[
-              if (e.isDir) Padding(padding: const EdgeInsets.only(right: 2), child: Icon(Icons.chevron_right_rounded, size: 20, color: p.fg3)),
-              IconBtn(Icons.more_vert_rounded, size: 19, color: p.fg3, onTap: onMore),
+              if (e.isDir) Padding(padding: const EdgeInsets.only(right: 2), child: Icon(Icons.chevron_right_rounded, size: 20, color: p.ink3)),
+              IconBtn(Icons.more_vert_rounded, size: 20, color: p.ink3, onTap: onMore),
             ],
           ]),
         ),
@@ -585,14 +670,14 @@ class _EmptyState extends StatelessWidget {
       const SizedBox(height: 90),
       Center(
         child: Container(
-          width: 50,
-          height: 50,
-          decoration: BoxDecoration(color: p.hover, borderRadius: BorderRadius.circular(14)),
-          child: Icon(icon, color: p.fg3),
+          width: 54,
+          height: 54,
+          decoration: BoxDecoration(color: p.key2, borderRadius: BorderRadius.circular(14), border: Border.all(color: p.stroke, width: 1.4)),
+          child: Icon(icon, color: p.ink),
         ),
       ),
       const SizedBox(height: 14),
-      Center(child: Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15))),
+      Center(child: Text(title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16))),
       const SizedBox(height: 4),
       Padding(padding: const EdgeInsets.symmetric(horizontal: 32), child: Text(text, textAlign: TextAlign.center, style: TextStyle(color: p.fg3))),
       if (action != null) ...[const SizedBox(height: 16), Center(child: action)],
@@ -637,9 +722,9 @@ Future<void> showProperties(BuildContext context, Session session, Entry? e) asy
                       : '${size!.bytes != null ? '${fmtBytes(size!.bytes)} · ' : ''}${size!.files} fayl, ${size!.dirs} papka';
               return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Row(children: [
-                  Icon(kindIcon(kind), color: kindColor(kind, dark: p.isDark)),
-                  const SizedBox(width: 10),
-                  Expanded(child: Text(e?.name ?? (pBasename(path)), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600))),
+                  KindBadge(entry: e ?? Entry(name: pBasename(path), type: EntryType.dir), size: 36),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text(e?.name ?? (pBasename(path)), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700))),
                 ]),
                 const SizedBox(height: 8),
                 row('Turi', kindLabel(kind)),
@@ -738,11 +823,8 @@ class _SearchPageState extends State<SearchPage> {
     final list = results;
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: p.bg,
-        surfaceTintColor: Colors.transparent,
-        scrolledUnderElevation: 0,
         titleSpacing: 0,
-        shape: Border(bottom: BorderSide(color: p.line)),
+        shape: Border(bottom: BorderSide(color: p.line2, width: 1.4)),
         title: TextField(
           controller: input,
           autofocus: true,
@@ -753,7 +835,7 @@ class _SearchPageState extends State<SearchPage> {
           style: const TextStyle(fontSize: 16),
           decoration: InputDecoration(border: InputBorder.none, hintText: 'Qidirish: ${pBasename(files.cwd)}', hintStyle: TextStyle(color: p.fg3)),
         ),
-        actions: [IconBtn(Icons.search_rounded, color: p.fg, onTap: _run)],
+        actions: [Padding(padding: const EdgeInsets.only(right: 10), child: KeyIcon(Icons.search_rounded, tone: KeyTone.signal, size: 38, onTap: _run))],
       ),
       body: Column(children: [
         Padding(
@@ -786,19 +868,13 @@ class _SearchPageState extends State<SearchPage> {
             itemBuilder: (context, i) {
               final h = list![i];
               final rel = h.path.startsWith('${files.cwd}/') ? h.path.substring(files.cwd.length + 1) : h.path;
-              final kind = kindOf(Entry(name: pBasename(h.path), type: h.type == 'dir' ? EntryType.dir : EntryType.file));
-              final color = kindColor(kind, dark: p.isDark);
+              final entry = Entry(name: pBasename(h.path), type: h.type == 'dir' ? EntryType.dir : EntryType.file);
               return InkWell(
                 onTap: () => _open(h),
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 9, 16, 9),
                   child: Row(children: [
-                    Container(
-                      width: 34,
-                      height: 34,
-                      decoration: BoxDecoration(color: color.withValues(alpha: p.isDark ? 0.14 : 0.11), borderRadius: BorderRadius.circular(9)),
-                      child: Icon(kindIcon(kind), size: 18, color: color),
-                    ),
+                    KindBadge(entry: entry, size: 36),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

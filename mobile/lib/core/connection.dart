@@ -6,6 +6,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart';
@@ -48,6 +49,37 @@ class Stats {
   double? uptime;
 }
 
+/// One monitor reading, kept for the graphs (the last [Connection.historyLength]).
+class StatSample {
+  const StatSample(this.at, {this.cpu, this.mem, this.rtt});
+  final int at; // epoch ms
+  final double? cpu, mem; // 0..1
+  final int? rtt; // ms
+}
+
+/// A process from `ps` (the "Jarayonlar" list).
+class Proc {
+  const Proc(this.pid, this.user, this.cpu, this.mem, this.rss, this.command);
+  final int pid;
+  final String user, command;
+  final double cpu, mem; // percent
+  final int rss; // bytes
+}
+
+/// `ps` output (pid user %cpu %mem rss(kB) args) → processes, busiest first.
+List<Proc> parsePs(String text, {int limit = 15}) {
+  final out = <Proc>[];
+  for (final line in text.split('\n')) {
+    final f = line.trim().split(RegExp(r'\s+'));
+    if (f.length < 6) continue;
+    final pid = int.tryParse(f[0]);
+    if (pid == null) continue;
+    out.add(Proc(pid, f[1], double.tryParse(f[2]) ?? 0, double.tryParse(f[3]) ?? 0, (int.tryParse(f[4]) ?? 0) * 1024, f.sublist(5).join(' ')));
+  }
+  out.sort((a, b) => b.cpu != a.cpu ? b.cpu.compareTo(a.cpu) : b.mem.compareTo(a.mem));
+  return out.take(limit).toList();
+}
+
 const _backoff = [1, 2, 3, 5, 8, 12, 15];
 const _tmux = 'tmux -u -L pult -f /dev/null';
 final _sessionRe = RegExp(r'^pult-\d{4}$');
@@ -62,7 +94,7 @@ String tmuxScript(String name, int cols, int rows) {
     'set -ga terminal-overrides ",xterm*:smcup@:rmcup@:Tc"',
     'set -g focus-events on',
   ].join(r' \; ');
-  final create = '\$T new-session -d -s "\$S" -x $cols -y $rows';
+  final create = '\$T set -g history-limit 20000 \\; new-session -d -s "\$S" -x $cols -y $rows';
   final everyTime = ['set -g set-clipboard on', 'set -g allow-passthrough on'].map((o) => '\$T $o >/dev/null 2>&1').join('; ');
   return [
     'S=$name',
@@ -192,7 +224,31 @@ class Connection extends ChangeNotifier {
   Future<SftpClient>? _sftp;
   Timer? _retryTimer, _readyTimer, _watchdog, _monitorTimer;
   SSHSession? _monitor;
-  DateTime? _pingSentAt;
+  final _pingTimes = <DateTime>[]; // unanswered pings, answered in order
+  Timer? _fastPing;
+
+  /// Every ping reply (ms). The transfer pacer listens while files move.
+  final pongs = <void Function(int rtt)>{};
+  final _pingSlots = <(int, int)>[]; // (slot start, lowest ping) per 30 s
+
+  /// The ping of this link with nothing queued: the lowest of the last
+  /// 3 minutes, including before a transfer started. Null before any reply.
+  int? get quietPing => _pingSlots.isEmpty ? null : _pingSlots.map((s) => s.$2).reduce(min);
+
+  void _notePing(int rtt) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (_pingSlots.isEmpty || now - _pingSlots.last.$1 > 30000) {
+      _pingSlots.add((now, rtt));
+      if (_pingSlots.length > 6) _pingSlots.removeAt(0);
+    } else {
+      final last = _pingSlots.removeLast();
+      _pingSlots.add((last.$1, min(last.$2, rtt)));
+    }
+  }
+
+  /// The last few minutes of readings, for the graphs.
+  final samples = <StatSample>[];
+  static const historyLength = 150; // 5 minutes at one reading per 2 s
   List<int>? _cpuPrev;
   String? _password, _passphrase;
   List<SSHKeyPair>? _identities;
@@ -203,6 +259,9 @@ class Connection extends ChangeNotifier {
   final _waiters = <Completer<void>>[];
 
   bool get isReady => state == ConnState.ready;
+
+  /// The live SSH client (tunnels open their channels on it), or null while down.
+  SSHClient? get client => isReady ? _client : null;
 
   void _set(ConnState s) {
     state = s;
@@ -384,6 +443,7 @@ class Connection extends ChangeNotifier {
 
     final wasReady = everReady;
     everReady = true;
+    _pingSlots.clear(); // a new link may take another path
     _set(ConnState.ready);
     for (final w in _waiters) {
       w.complete();
@@ -492,6 +552,7 @@ class Connection extends ChangeNotifier {
     closed = true;
     _retryTimer?.cancel();
     _readyTimer?.cancel();
+    setFastPing(false);
     _stopWatch();
     for (final w in _waiters) {
       w.completeError(ConnError('CLOSED', 'Ulanish yopilgan'));
@@ -553,9 +614,9 @@ class Connection extends ChangeNotifier {
       m.stderr.listen((_) {}, onError: (_) {});
       void tick() {
         if (gen != _gen || _monitor == null) return;
-        _pingSentAt = DateTime.now();
+        _ping();
         try {
-          m.write(Uint8List.fromList(utf8.encode(agentPolling ? 'p\ns\na\n' : 'p\ns\n')));
+          m.write(Uint8List.fromList(utf8.encode(agentPolling ? 's\na\n' : 's\n')));
         } catch (_) {}
       }
 
@@ -566,11 +627,33 @@ class Connection extends ChangeNotifier {
     }
   }
 
+  /// A ping on the monitor channel; a few may be outstanding on a slow link.
+  void _ping() {
+    final m = _monitor;
+    if (m == null || _pingTimes.length >= 4) return;
+    _pingTimes.add(DateTime.now());
+    try {
+      m.write(Uint8List.fromList(const [0x70, 0x0a])); // "p\n"
+    } catch (_) {}
+  }
+
+  /// Ping every 250 ms while files move, so the transfer pacer sees at once
+  /// when the link's queue grows and the terminal would lag.
+  void setFastPing(bool on) {
+    if (on && _fastPing == null) {
+      _fastPing = Timer.periodic(const Duration(milliseconds: 250), (_) => _ping());
+    } else if (!on && _fastPing != null) {
+      _fastPing!.cancel();
+      _fastPing = null;
+    }
+  }
+
   void _stopWatch() {
     _watchdog?.cancel();
     _monitorTimer?.cancel();
     _monitor?.close();
     _monitor = null;
+    _pingTimes.clear();
     _scanPanes = _scanFiles = null;
     _fetchBuf = null;
     for (final f in _fetches) {
@@ -630,7 +713,14 @@ class Connection extends ChangeNotifier {
     final nums = parts.skip(1).map((e) => int.tryParse(e) ?? double.tryParse(e)?.toInt() ?? 0).toList();
     switch (parts.first) {
       case 'p':
-        if (_pingSentAt != null) stats.rtt = DateTime.now().difference(_pingSentAt!).inMilliseconds;
+        if (_pingTimes.isNotEmpty) {
+          final rtt = DateTime.now().difference(_pingTimes.removeAt(0)).inMilliseconds;
+          stats.rtt = rtt;
+          _notePing(rtt);
+          for (final f in pongs.toList()) {
+            f(rtt);
+          }
+        }
       case 'cpu':
         final total = nums.fold<int>(0, (a, b) => a + b);
         final idle = (nums.length > 4 ? nums[3] + nums[4] : 0);
@@ -658,6 +748,9 @@ class Connection extends ChangeNotifier {
       case 'up':
         stats.uptime = double.tryParse(parts.length > 1 ? parts[1] : '');
       case 'end':
+        final mem = stats.memTotal != null && stats.memTotal! > 0 && stats.memUsed != null ? stats.memUsed! / stats.memTotal! : null;
+        samples.add(StatSample(DateTime.now().millisecondsSinceEpoch, cpu: stats.cpu, mem: mem, rtt: stats.rtt));
+        if (samples.length > historyLength) samples.removeRange(0, samples.length - historyLength);
         notifyListeners();
     }
   }
@@ -703,11 +796,31 @@ class Connection extends ChangeNotifier {
     return 'pult-${(n + 1).toString().padLeft(4, '0')}';
   }
 
+  /// Earlier output of a tmux session (above its visible screen), with
+  /// colours, wrapped lines joined — shown before re-attaching so the
+  /// scrollback is not lost when the app restarts or another device opened it.
+  Future<String> history(String session, {int lines = 3000}) async {
+    if (!_sessionRe.hasMatch(session) || !isReady) return '';
+    final r = await exec('$_tmux capture-pane -p -e -J -S -$lines -E -1 -t $session 2>/dev/null; true');
+    return r.stdout;
+  }
+
+  /// The busiest processes on the server.
+  Future<List<Proc>> processes() async {
+    final r = await exec('ps -eo pid=,user=,pcpu=,pmem=,rss=,args= 2>/dev/null || ps -o pid=,user=,pcpu=,pmem=,rss=,args= 2>/dev/null');
+    return parsePs(r.stdout);
+  }
+
+  /// Stop a process: TERM, or KILL when [force].
+  Future<ExecResult> kill(int pid, {bool force = false}) => exec('kill -${force ? 'KILL' : 'TERM'} $pid');
+
   Future<RemoteShell> openShell({String? attach}) async {
     final persist = server.persist && hasTmux;
     String? name;
     if (persist) name = attach != null && _sessionRe.hasMatch(attach) ? attach : _nextSessionName();
     final shell = RemoteShell(this, session: name);
+    // An existing session: its earlier output comes first (tmux history).
+    if (name != null && attach == name && knownSessions.contains(name) && store.settings.restoreHistory) shell._historyFrom = name;
     shells.add(shell);
     if (name != null) knownSessions.add(name);
     notifyListeners();
@@ -797,10 +910,19 @@ class RemoteShell {
   int channels = 0;
   SSHSession? _ch;
   StreamSubscription<String>? _out, _err;
+  String? _historyFrom;
 
   bool get persistent => session != null;
 
   Future<void> _open(SSHClient client) async {
+    final from = _historyFrom;
+    if (from != null && channels == 0) {
+      _historyFrom = null;
+      try {
+        writeHistory(await conn.history(from));
+      } catch (_) {}
+      if (closing) return;
+    }
     final w = terminal.viewWidth;
     final h = terminal.viewHeight;
     final pty = SSHPtyConfig(type: 'xterm-256color', width: w, height: h);
@@ -821,6 +943,18 @@ class RemoteShell {
     _out = ch.stdout.cast<List<int>>().transform(dec).listen(terminal.write, onError: (_) {});
     _err = ch.stderr.cast<List<int>>().transform(dec).listen(terminal.write, onError: (_) {});
     ch.done.then((_) => _ended(ch, client), onError: (_) => _ended(ch, client));
+  }
+
+  /// Re-attaching a tmux session only redraws its visible screen: put the
+  /// lines above it into the scrollback first, then leave an empty viewport
+  /// for tmux to paint (same as the desktop app).
+  @visibleForTesting
+  void writeHistory(String text) {
+    if (text.trim().isEmpty) return;
+    // Trailing padding (also before a closing colour code) would wrap on a narrower screen.
+    final trail = RegExp(r' +((?:\x1b\[[0-9;]*m)*)$');
+    final lines = text.replaceFirst(RegExp(r'\n$'), '').split('\n').map((l) => l.replaceFirstMapped(trail, (m) => m[1] ?? ''));
+    terminal.write('${lines.join('\r\n')}\x1b[0m\r\n${'\r\n' * terminal.viewHeight}\x1b[H');
   }
 
   void _ended(SSHSession ch, SSHClient client) {

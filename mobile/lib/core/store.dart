@@ -24,7 +24,9 @@ class Server {
     this.hasKey = false,
     int? createdAt,
     this.lastUsed = 0,
-  }) : createdAt = createdAt ?? DateTime.now().millisecondsSinceEpoch;
+    List<Map<String, dynamic>>? tunnels,
+  })  : createdAt = createdAt ?? DateTime.now().millisecondsSinceEpoch,
+        tunnels = tunnels ?? [];
 
   final String id;
   String name;
@@ -39,6 +41,9 @@ class Server {
   bool hasKey;
   final int createdAt;
   int lastUsed;
+
+  /// Saved SSH tunnels: {remoteHost, remotePort, localPort} (as on the desktop).
+  List<Map<String, dynamic>> tunnels;
 
   String get address => '$username@$host${port != 22 ? ':$port' : ''}';
 
@@ -56,6 +61,7 @@ class Server {
         'hasKey': hasKey,
         'createdAt': createdAt,
         'lastUsed': lastUsed,
+        if (tunnels.isNotEmpty) 'tunnels': tunnels,
       };
 
   factory Server.fromJson(Map<String, dynamic> j) => Server(
@@ -72,24 +78,106 @@ class Server {
         hasKey: j['hasKey'] as bool? ?? false,
         createdAt: j['createdAt'] as int?,
         lastUsed: j['lastUsed'] as int? ?? 0,
+        tunnels: j['tunnels'] is List
+            ? [
+                for (final t in j['tunnels'] as List)
+                  if (t is Map && t['remotePort'] is int) {'remoteHost': t['remoteHost'] is String ? t['remoteHost'] : '127.0.0.1', 'remotePort': t['remotePort'], 'localPort': t['localPort'] is int ? t['localPort'] : t['remotePort']},
+              ]
+            : null,
       );
 
   Server copy() => Server.fromJson(toJson());
 }
 
+/// A saved command line, typed into the terminal with one tap. [run]: press
+/// Enter too. Same shape as the desktop app's `snippets`.
+class Snippet {
+  Snippet({this.name = '', required this.cmd, this.run = true});
+  String name, cmd;
+  bool run;
+
+  String get label => name.trim().isNotEmpty ? name.trim() : cmd.trim();
+
+  Map<String, dynamic> toJson() => {'name': name, 'cmd': cmd, 'run': run};
+  factory Snippet.fromJson(Map<String, dynamic> j) => Snippet(name: j['name'] as String? ?? '', cmd: j['cmd'] as String? ?? '', run: j['run'] as bool? ?? true);
+}
+
+List<Snippet> defaultSnippets() => [
+      Snippet(cmd: 'df -h'),
+      Snippet(cmd: 'free -h'),
+      Snippet(cmd: 'docker ps'),
+      Snippet(cmd: 'systemctl --failed'),
+    ];
+
+const signalColors = ['orange', 'yellow', 'blue', 'green'];
+const bodyColors = ['gray', 'mint', 'sky', 'sand'];
+
 class Settings {
-  Settings({this.theme = 'system', this.fontSize = 12.5, this.extraKeys = true, this.agentUsage = true});
+  Settings({
+    this.theme = 'system',
+    this.signal = 'orange',
+    this.body = 'gray',
+    this.fontSize = 12.5,
+    this.extraKeys = true,
+    this.agentUsage = true,
+    this.restoreSessions = true,
+    this.restoreHistory = true,
+    this.transferPace = 'smooth',
+    this.checkUpdates = true,
+    List<Snippet>? snippets,
+    List<String>? openServers,
+    this.lastServer,
+    this.skipVersion,
+  })  : snippets = snippets ?? defaultSnippets(),
+        openServers = openServers ?? [];
   String theme; // system | dark | light
+  String signal; // the accent: orange | yellow | blue | green
+  String body; // chassis tint in the light theme: gray | mint | sky | sand
   double fontSize;
   bool extraKeys;
   bool agentUsage; // Claude Code / agy limits under the top bar
+  bool restoreSessions; // reconnect to the servers that were open last time
+  bool restoreHistory; // show a re-attached terminal's earlier output (tmux history)
+  String transferPace; // smooth: keep the ping low while files move · fast: no pacing
+  bool checkUpdates; // look for a newer Pult on GitHub Releases
+  List<Snippet> snippets;
+  List<String> openServers; // server ids open when the app was last used
+  String? lastServer; // …and the one in front
+  String? skipVersion; // "Bu versiyani o‘tkazib yuborish"
 
-  Map<String, dynamic> toJson() => {'theme': theme, 'fontSize': fontSize, 'extraKeys': extraKeys, 'agentUsage': agentUsage};
+  Map<String, dynamic> toJson() => {
+        'theme': theme,
+        'signal': signal,
+        'body': body,
+        'fontSize': fontSize,
+        'extraKeys': extraKeys,
+        'agentUsage': agentUsage,
+        'restoreSessions': restoreSessions,
+        'restoreHistory': restoreHistory,
+        'transferPace': transferPace,
+        'checkUpdates': checkUpdates,
+        'snippets': snippets.map((e) => e.toJson()).toList(),
+        'openServers': openServers,
+        'lastServer': lastServer,
+        'skipVersion': skipVersion,
+      };
   factory Settings.fromJson(Map<String, dynamic> j) => Settings(
         theme: j['theme'] as String? ?? 'system',
+        signal: signalColors.contains(j['signal']) ? j['signal'] as String : 'orange',
+        body: bodyColors.contains(j['body']) ? j['body'] as String : 'gray',
         fontSize: (j['fontSize'] as num?)?.toDouble() ?? 12.5,
         extraKeys: j['extraKeys'] as bool? ?? true,
         agentUsage: j['agentUsage'] as bool? ?? true,
+        restoreSessions: j['restoreSessions'] as bool? ?? true,
+        restoreHistory: j['restoreHistory'] as bool? ?? true,
+        transferPace: j['transferPace'] == 'fast' ? 'fast' : 'smooth',
+        checkUpdates: j['checkUpdates'] as bool? ?? true,
+        snippets: j['snippets'] is List
+            ? [for (final e in j['snippets'] as List) if (e is Map<String, dynamic> && (e['cmd'] as String? ?? '').trim().isNotEmpty) Snippet.fromJson(e)]
+            : null,
+        openServers: j['openServers'] is List ? [for (final e in j['openServers'] as List) if (e is String) e] : null,
+        lastServer: j['lastServer'] as String?,
+        skipVersion: j['skipVersion'] as String?,
       );
 }
 

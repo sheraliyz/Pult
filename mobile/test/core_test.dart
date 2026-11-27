@@ -17,6 +17,7 @@ import 'package:pult/core/fsops.dart';
 import 'package:pult/core/keys.dart';
 import 'package:pult/core/store.dart';
 import 'package:pult/core/transfers.dart';
+import 'package:pult/core/tunnels.dart';
 
 const mockRoot = String.fromEnvironment('MOCK_ROOT');
 
@@ -100,6 +101,64 @@ void main() {
   test('monitor reports latency and load', () async {
     await until(() => conn.stats.rtt != null && conn.stats.cpu != null && conn.stats.memTotal != null, what: 'stats');
     expect(conn.stats.diskTotal, greaterThan(0));
+  });
+
+  test('ping replies feed the quiet ping (the pacer\'s base)', () async {
+    final seen = <int>[];
+    void listen(int rtt) => seen.add(rtt);
+    conn.pongs.add(listen);
+    addTearDown(() => conn.pongs.remove(listen));
+    conn.setFastPing(true);
+    await until(() => seen.length >= 3, what: 'fast pings');
+    conn.setFastPing(false);
+    expect(conn.quietPing, isNotNull);
+    expect(conn.quietPing!, lessThanOrEqualTo(seen.reduce(min)));
+  });
+
+  test('tmux history, processes and listening ports', () async {
+    expect(await conn.history('pult-0001'), contains('earlier output 2'));
+    expect(await conn.history('not a session; rm -rf /'), '');
+    final procs = await conn.processes();
+    expect(procs.first.command, startsWith('/usr/bin/dockerd'));
+    expect(procs.first.cpu, 38.5);
+    expect(procs.map((p) => p.pid), containsAll([812, 2210, 1203, 1]));
+    final ports = await Tunnels(conn).scan();
+    expect(ports.map((p) => p.port), [443, 5432, 18080]);
+    expect(ports.firstWhere((p) => p.port == 5432).localOnly, isTrue);
+    expect(ports.firstWhere((p) => p.port == 443).proc, 'nginx');
+  });
+
+  test('SSH tunnel: a server-side web page opens on the phone', () async {
+    // The "server's" web panel: on the mock, the server is this machine.
+    final web = await HttpServer.bind(InternetAddress.loopbackIPv4, 18080);
+    web.listen((r) {
+      r.response.write('salom ${r.uri.path}');
+      r.response.close();
+    });
+    addTearDown(() => web.close(force: true));
+    final tunnels = Tunnels(conn);
+    addTearDown(tunnels.closeAll);
+    final t = await tunnels.add('127.0.0.1', 18080, local: 18182);
+    expect(t.localPort, 18182);
+    final http = HttpClient();
+    addTearDown(() => http.close(force: true));
+    final res = await (await http.getUrl(Uri.parse('${t.url}/panel'))).close();
+    expect(await res.transform(utf8.decoder).join(), 'salom /panel');
+    await until(() => t.total == 1, what: 'counted');
+    // The same port twice: the second one gets a free port and says so.
+    final busy = await ServerSocket.bind(InternetAddress.loopbackIPv4, 18183);
+    addTearDown(busy.close);
+    // A port where nothing listens on the "server" (free right now on this machine).
+    final probe = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final dead = probe.port;
+    await probe.close();
+    final t2 = await tunnels.add('127.0.0.1', dead, local: 18183);
+    expect(t2.localPort, isNot(18183));
+    expect(t2.error, contains('band edi'));
+    // A clear error, not a hang.
+    final res2 = await HttpClient().getUrl(Uri.parse(t2.url)).then((r) => r.close()).then<Object?>((r) => r, onError: (Object e) => e);
+    expect(res2, isNot(isA<HttpClientResponse>()));
+    await until(() => t2.error != null && t2.error!.contains('$dead-portda hech narsa'), what: 'refused message');
   });
 
   test('files: list, mkdir, write, read, rename, delete', () async {

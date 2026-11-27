@@ -9,6 +9,7 @@ import 'package:xterm/xterm.dart';
 import '../app_state.dart';
 import '../core/connection.dart';
 import '../theme.dart';
+import 'snippets.dart';
 import 'widgets.dart';
 
 class TerminalPane extends StatefulWidget {
@@ -49,7 +50,7 @@ class _TerminalPaneState extends State<TerminalPane> {
     final p = context.pal;
     final shell = widget.session.active;
     _bind(shell);
-    if (shell == null) return Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: p.fg3)));
+    if (shell == null) return Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: p.signal)));
     final hasSelection = shell.controller.selection != null;
     return Stack(children: [
       Positioned.fill(
@@ -61,9 +62,9 @@ class _TerminalPaneState extends State<TerminalPane> {
           autofocus: true,
           theme: terminalTheme(p),
           textStyle: TerminalStyle(fontSize: widget.fontSize, height: 1.25, fontFamily: kMono),
-          padding: const EdgeInsets.fromLTRB(10, 8, 6, 4),
+          padding: const EdgeInsets.fromLTRB(8, 7, 4, 4),
           keyboardType: TextInputType.visiblePassword, // no autocorrect / suggestions
-          keyboardAppearance: p.isDark ? Brightness.dark : Brightness.light,
+          keyboardAppearance: Brightness.dark,
           deleteDetection: true,
           // xterm 4.0 draws bar/underline cursors on the first row (ignores
           // the y offset); the block cursor is positioned correctly.
@@ -74,7 +75,7 @@ class _TerminalPaneState extends State<TerminalPane> {
         Positioned(
           top: 10,
           right: 12,
-          child: _Pill(icon: Icons.copy_rounded, label: 'Nusxalash', onTap: () {
+          child: Btn('Nusxalash', icon: Icons.copy_rounded, kind: BtnKind.primary, small: true, onTap: () {
             final text = shell.selectedText();
             shell.controller.clearSelection();
             if (text.isNotEmpty) copyText(context, text);
@@ -87,46 +88,17 @@ class _TerminalPaneState extends State<TerminalPane> {
           bottom: 20,
           child: Center(
             child: Container(
-              padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
-              decoration: BoxDecoration(color: p.bg2, borderRadius: BorderRadius.circular(14), border: Border.all(color: p.line2)),
+              padding: const EdgeInsets.fromLTRB(16, 10, 10, 8),
+              decoration: BoxDecoration(color: p.paper, borderRadius: BorderRadius.circular(14), border: Border.all(color: p.stroke, width: 1.4)),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Text('Sessiya yakunlandi', style: TextStyle(color: p.fg2, fontWeight: FontWeight.w500)),
+                Text('Sessiya yakunlandi', style: TextStyle(color: p.ink, fontWeight: FontWeight.w600)),
                 const SizedBox(width: 12),
-                Btn('Qayta ochish', kind: BtnKind.primary, icon: Icons.refresh_rounded, onTap: () => widget.session.conn.reopenShell(shell)),
+                Btn('Qayta ochish', kind: BtnKind.primary, icon: Icons.refresh_rounded, small: true, onTap: () => widget.session.conn.reopenShell(shell)),
               ]),
             ),
           ),
         ),
     ]);
-  }
-}
-
-class _Pill extends StatelessWidget {
-  const _Pill({required this.icon, required this.label, required this.onTap});
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final p = context.pal;
-    return Material(
-      color: p.fg,
-      borderRadius: BorderRadius.circular(99),
-      elevation: 4,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(99),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(icon, size: 16, color: p.bg),
-            const SizedBox(width: 7),
-            Text(label, style: TextStyle(color: p.bg, fontWeight: FontWeight.w600, fontSize: 13.5)),
-          ]),
-        ),
-      ),
-    );
   }
 }
 
@@ -184,66 +156,69 @@ class _ExtraKeysState extends State<ExtraKeys> {
   @override
   Widget build(BuildContext context) {
     final p = context.pal;
-    final agent = widget.session?.agentIn(s) != null;
-    Widget key(String label, VoidCallback onTap, {bool on = false, IconData? icon, double w = 46}) => Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
-          child: Material(
-            color: on ? p.accent : p.bg3,
-            borderRadius: BorderRadius.circular(8),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(8),
-              onTap: onTap,
-              child: Container(
-                constraints: BoxConstraints(minWidth: w),
-                height: 36,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                alignment: Alignment.center,
-                decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), border: Border.all(color: on ? p.accent : p.line)),
-                child: icon != null
-                    ? Icon(icon, size: 18, color: on ? p.accentFg : p.fg)
-                    : Text(label, style: TextStyle(fontFamily: kMono, fontSize: 13, fontWeight: FontWeight.w500, color: on ? p.accentFg : p.fg)),
+    final session = widget.session;
+    final agent = session?.agentIn(s) != null;
+    Widget key(String label, VoidCallback onTap, {bool on = false, IconData? icon, double w = 46, KeyTone tone = KeyTone.light}) => Padding(
+          padding: const EdgeInsets.only(right: 6),
+          child: KeyCap(
+            tone: on ? KeyTone.signal : tone,
+            onTap: onTap,
+            height: 38,
+            radius: 9,
+            depth: 2.5,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minWidth: w - 16),
+              child: Center(
+                widthFactor: 1,
+                child: icon != null ? Icon(icon, size: 19) : Text(label, style: const TextStyle(fontFamily: kMono, fontSize: 13.5, fontWeight: FontWeight.w700)),
               ),
             ),
           ),
         );
     return Container(
-      decoration: BoxDecoration(color: p.bg, border: Border(top: BorderSide(color: p.line))),
+      padding: const EdgeInsets.only(top: 6, bottom: 4),
+      decoration: BoxDecoration(color: p.rail, border: Border(top: BorderSide(color: p.stroke, width: 1.4))),
       child: Row(children: [
         Expanded(
           child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 6),
+            padding: const EdgeInsets.only(left: 8, right: 2),
             child: Row(children: [
               if (agent) ...[
                 // LF: a line break inside the agent's prompt (Enter sends).
                 key('', () {
                   s.newline();
                   HapticFeedback.selectionClick();
-                }, icon: Icons.subdirectory_arrow_left_rounded, w: 40),
-                key('', _sendFiles, icon: Icons.attach_file_rounded, w: 40),
+                }, icon: Icons.subdirectory_arrow_left_rounded, w: 42, tone: KeyTone.gray),
+                key('', _sendFiles, icon: Icons.attach_file_rounded, w: 42, tone: KeyTone.gray),
               ],
               key('Esc', () => _key(TerminalKey.escape)),
               key('Tab', () => _key(TerminalKey.tab)),
               key('Ctrl', () => setState(() => s.ctrl = !s.ctrl), on: s.ctrl),
               key('Alt', () => setState(() => s.alt = !s.alt), on: s.alt),
-              key('', () => _key(TerminalKey.arrowLeft), icon: Icons.keyboard_arrow_left_rounded, w: 40),
-              key('', () => _key(TerminalKey.arrowDown), icon: Icons.keyboard_arrow_down_rounded, w: 40),
-              key('', () => _key(TerminalKey.arrowUp), icon: Icons.keyboard_arrow_up_rounded, w: 40),
-              key('', () => _key(TerminalKey.arrowRight), icon: Icons.keyboard_arrow_right_rounded, w: 40),
-              key('-', () => _text('-'), w: 36),
-              key('/', () => _text('/'), w: 36),
-              key('|', () => _text('|'), w: 36),
-              key('~', () => _text('~'), w: 36),
+              key('', () => _key(TerminalKey.arrowLeft), icon: Icons.keyboard_arrow_left_rounded, w: 42),
+              key('', () => _key(TerminalKey.arrowDown), icon: Icons.keyboard_arrow_down_rounded, w: 42),
+              key('', () => _key(TerminalKey.arrowUp), icon: Icons.keyboard_arrow_up_rounded, w: 42),
+              key('', () => _key(TerminalKey.arrowRight), icon: Icons.keyboard_arrow_right_rounded, w: 42),
+              key('-', () => _text('-'), w: 38),
+              key('/', () => _text('/'), w: 38),
+              key('|', () => _text('|'), w: 38),
+              key('~', () => _text('~'), w: 38),
               key('Home', () => _key(TerminalKey.home)),
               key('End', () => _key(TerminalKey.end)),
               key('PgUp', () => _key(TerminalKey.pageUp)),
               key('PgDn', () => _key(TerminalKey.pageDown)),
+              if (session != null) key('', () => showSnippets(context, session), icon: Icons.bolt_rounded, w: 42, tone: KeyTone.gray),
             ]),
           ),
         ),
-        Container(width: 1, height: 26, color: p.line),
-        IconBtn(Icons.content_paste_rounded, tip: 'Qo‘yish', size: 19, onTap: _paste),
-        IconBtn(Icons.keyboard_hide_outlined, tip: 'Klaviaturani yopish', size: 20, onTap: () => FocusManager.instance.primaryFocus?.unfocus()),
+        Container(width: 1.4, height: 30, color: p.line2),
+        const SizedBox(width: 6),
+        KeyIcon(Icons.content_paste_rounded, tip: 'Qo‘yish', size: 38, iconSize: 18, onTap: _paste),
+        const SizedBox(width: 6),
+        KeyIcon(Icons.keyboard_hide_outlined, tip: 'Klaviaturani yopish', size: 38, iconSize: 19, onTap: () => FocusManager.instance.primaryFocus?.unfocus()),
+        const SizedBox(width: 8),
       ]),
     );
   }

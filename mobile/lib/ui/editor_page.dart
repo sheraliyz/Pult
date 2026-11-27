@@ -85,7 +85,7 @@ Map<String, TextStyle> _syntax(Pal p) {
   final prop = c(0xFF89DDFF, 0xFF0E7490);
   final tag = c(0xFFF07178, 0xFFBE123C);
   return {
-    'root': TextStyle(color: p.fg, backgroundColor: p.bg),
+    'root': TextStyle(color: p.fg, backgroundColor: p.input),
     'keyword': keyword,
     'built_in': type,
     'type': type,
@@ -244,19 +244,18 @@ class _EditorPageState extends State<EditorPage> {
         }
       },
       child: Scaffold(
+        backgroundColor: p.input,
         appBar: AppBar(
-          backgroundColor: p.bg,
-          surfaceTintColor: Colors.transparent,
-          scrolledUnderElevation: 0,
-          titleSpacing: 0,
-          leadingWidth: 48,
+          backgroundColor: p.body,
+          titleSpacing: 10,
+          leadingWidth: 58,
           // Explicit, so the unsaved-changes guard (PopScope) always runs.
-          leading: IconBtn(Icons.arrow_back_rounded, tip: 'Orqaga', size: 22, color: p.fg, onTap: () => Navigator.maybePop(context)),
-          shape: Border(bottom: BorderSide(color: p.line)),
+          leading: Center(child: KeyIcon(Icons.arrow_back_rounded, tip: 'Orqaga', tone: KeyTone.light, size: 38, onTap: () => Navigator.maybePop(context))),
+          shape: Border(bottom: BorderSide(color: p.stroke, width: 1.4)),
           title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
               Flexible(child: Text(pBasename(widget.path), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600))),
-              if (dirty) ...[const SizedBox(width: 7), Dot(p.fg, size: 6)],
+              if (dirty) ...[const SizedBox(width: 7), Dot(p.signal, size: 9, ring: true)],
             ]),
             Text(lang.$1, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11.5, color: p.fg3, fontFamily: kMono)),
           ]),
@@ -279,11 +278,11 @@ class _EditorPageState extends State<EditorPage> {
               fontFamily: kMono,
               fontHeight: 1.5,
               textColor: p.fg,
-              backgroundColor: p.bg,
+              backgroundColor: p.input,
               selectionColor: p.isDark ? const Color(0x40FFFFFF) : const Color(0x292563EB),
               highlightColor: p.isDark ? const Color(0x33FACC15) : const Color(0x38EAB308),
-              cursorColor: p.fg,
-              cursorLineColor: p.hover,
+              cursorColor: p.ink,
+              cursorLineColor: p.signal.withValues(alpha: 0.1),
               chunkIndicatorColor: p.fg3,
               codeTheme: _themeFor(p),
             ),
@@ -291,7 +290,7 @@ class _EditorPageState extends State<EditorPage> {
               DefaultCodeLineNumber(controller: editing, notifier: notifier, textStyle: mono, focusedTextStyle: mono.copyWith(color: p.fg)),
               DefaultCodeChunkIndicator(width: 18, controller: chunk, notifier: notifier, painter: DefaultCodeChunkIndicatorPainter(color: p.fg3)),
             ]),
-            leadingDivider: Container(width: 1, color: p.line),
+            leadingDivider: Container(width: 1.4, color: p.line2),
             findBuilder: (context, f, readOnly) => _FindPanel(controller: f),
             toolbarController: const _SelectionMenu(),
           ),
@@ -301,7 +300,7 @@ class _EditorPageState extends State<EditorPage> {
   }
 }
 
-/// Compact save button: filled when there is something to save.
+/// Save key: signal-coloured when there is something to save.
 class _SaveBtn extends StatelessWidget {
   const _SaveBtn({required this.dirty, required this.busy, required this.onTap});
   final bool dirty, busy;
@@ -310,26 +309,14 @@ class _SaveBtn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = context.pal;
-    final fg = dirty ? p.accentFg : p.fg3;
-    return Tooltip(
-      message: 'Saqlash (o‘zgarishlar bo‘lsa)',
-      child: Material(
-        color: dirty ? p.accent : Colors.transparent,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10), side: BorderSide(color: dirty ? p.accent : p.line2)),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(10),
-          onTap: dirty && !busy ? onTap : null,
-          child: SizedBox(
-            width: 38,
-            height: 34,
-            child: Center(
-              child: busy
-                  ? SizedBox(width: 15, height: 15, child: CircularProgressIndicator(strokeWidth: 1.8, color: fg))
-                  : Icon(Icons.check_rounded, size: 20, color: fg),
-            ),
-          ),
-        ),
-      ),
+    return KeyCap(
+      tip: 'Saqlash (o‘zgarishlar bo‘lsa)',
+      tone: dirty ? KeyTone.signal : KeyTone.light,
+      width: 42,
+      height: 38,
+      padding: EdgeInsets.zero,
+      onTap: dirty && !busy ? onTap : null,
+      child: busy ? SizedBox(width: 15, height: 15, child: CircularProgressIndicator(strokeWidth: 2, color: p.onSignal)) : const Icon(Icons.check_rounded, size: 21),
     );
   }
 }

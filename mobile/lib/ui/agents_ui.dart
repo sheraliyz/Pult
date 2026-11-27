@@ -14,7 +14,7 @@ const _staleMs = 45 * 60 * 1000;
 IconData agentIcon(Agent a) => a == Agent.claude ? Icons.flare_rounded : Icons.navigation_outlined;
 String agentLabel(Agent a) => a == Agent.claude ? 'Claude Code' : 'agy (Antigravity)';
 
-Color _tone(Pal p, double used) => used >= 0.9 ? p.err : used >= 0.75 ? p.warn : p.fg2;
+Color _tone(Pal p, double used) => used >= 0.9 ? p.err : used >= 0.75 ? p.warn : p.ink2;
 
 /// The most used bucket of each window across agy's model groups.
 ({UsageWindow? five, UsageWindow? week}) agyWindows(List<AgyGroup>? groups) {
@@ -37,114 +37,82 @@ class _Meter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = context.pal;
+    final tone = used >= 0.9 ? p.err : used >= 0.75 ? p.warn : p.signal;
     return Container(
       width: width,
       height: height,
-      decoration: BoxDecoration(color: p.line2, borderRadius: BorderRadius.circular(height)),
+      decoration: BoxDecoration(color: p.well, borderRadius: BorderRadius.circular(height), border: Border.all(color: p.stroke, width: 1.2)),
       alignment: Alignment.centerLeft,
       child: FractionallySizedBox(
-        widthFactor: used.clamp(0.04, 1.0),
-        child: Container(decoration: BoxDecoration(color: _tone(p, used), borderRadius: BorderRadius.circular(height))),
+        widthFactor: used.clamp(0.0, 1.0),
+        child: Container(decoration: BoxDecoration(color: tone, borderRadius: BorderRadius.circular(height))),
       ),
     );
   }
 }
 
-/// "Claude  5 soat ▰▱ 41%  hafta ▰▱ 12%" chips; tap opens the details sheet.
-class AgentBar extends StatelessWidget {
-  const AgentBar({super.key, required this.session});
-  final Session session;
+/// The AI chips of the status row: "✳ CLAUDE 5 soat 41% hafta 12%" in the
+/// signal colour (red when a window is nearly used up); tap opens the sheet.
+List<Widget> agentChips(BuildContext context, Session session) {
+  final p = context.pal;
+  final a = session.agents;
+  final chips = <Widget>[];
+  void open() => showAgentsSheet(context, session);
 
-  @override
-  Widget build(BuildContext context) {
-    final p = context.pal;
-    final a = session.agents;
-    final chips = <Widget>[];
-
-    // One window per line: "5 soat ▰▱ 41%" over "hafta ▰▱ 12%" keeps both
-    // agents on a phone-wide strip.
-    Widget win(String label, UsageWindow? w) => w == null
-        ? const SizedBox.shrink()
-        : Row(mainAxisSize: MainAxisSize.min, children: [
-            SizedBox(width: 38, child: Text(label, style: TextStyle(color: p.fg3, fontSize: 11, height: 1.2))),
-            _Meter(w.used, width: 18, height: 3),
-            const SizedBox(width: 5),
-            SizedBox(
-              width: 30,
-              child: Text('${(w.used * 100).round()}%',
-                  textAlign: TextAlign.right,
-                  style: TextStyle(color: w.used >= 0.75 ? _tone(p, w.used) : p.fg2, fontSize: 11, height: 1.2, fontWeight: FontWeight.w500, fontFeatures: const [FontFeature.tabularFigures()])),
-            ),
-          ]);
-    List<Widget> windows(UsageWindow? five, UsageWindow? week) => [
-          const SizedBox(width: 10),
-          Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [win('5 soat', five), win('hafta', week)]),
-        ];
-    Widget chip(Agent kind, String name, List<Widget> body, {bool dim = false}) => InkWell(
-          borderRadius: BorderRadius.circular(8),
-          onTap: () => showAgentsSheet(context, session),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-            child: Opacity(
-              opacity: dim ? 0.6 : 1,
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(agentIcon(kind), size: 14, color: p.fg3),
-                const SizedBox(width: 6),
-                Text(name, style: TextStyle(color: p.fg2, fontSize: 12.5, fontWeight: FontWeight.w500)),
-                ...body,
-              ]),
-            ),
-          ),
-        );
-    Widget note(String t, {Color? color, bool underline = false}) => Padding(
-          padding: const EdgeInsets.only(left: 10),
-          child: Text(t,
-              style: TextStyle(
-                color: color ?? p.fg3,
-                fontSize: 12,
-                decoration: underline ? TextDecoration.underline : null,
-                decorationColor: p.line2,
-              )),
-        );
-
-    if (a.has(Agent.claude) || a.bridged) {
-      final u = a.claudeUsage;
-      if (!a.bridged) {
-        chips.add(chip(Agent.claude, 'Claude', [note('limitni ulash', color: p.fg2, underline: true)]));
-      } else if (u != null && (u.five != null || u.week != null)) {
-        chips.add(chip(Agent.claude, 'Claude', windows(u.five?.now, u.week?.now), dim: nowMs() - u.t > _staleMs));
-      } else {
-        chips.add(chip(Agent.claude, 'Claude', [note('—')]));
-      }
-    }
-    if (a.agyPath != null) {
-      final w = agyWindows(a.agyUsage);
-      if (a.agyUsage != null) {
-        chips.add(chip(Agent.agy, 'agy', windows(w.five, w.week), dim: a.agyError != null));
-      } else if (a.agyBusy) {
-        chips.add(chip(Agent.agy, 'agy', [
-          Padding(padding: const EdgeInsets.only(left: 10), child: SizedBox(width: 10, height: 10, child: CircularProgressIndicator(strokeWidth: 1.4, color: p.fg3))),
-        ]));
-      } else if (a.agyError != null) {
-        chips.add(chip(Agent.agy, 'agy', [note(a.agyError!.code == 'AUTH' ? 'kirilmagan' : 'xato', color: p.warn)]));
-      }
-    }
-    if (chips.isEmpty) return const SizedBox.shrink();
-    return Container(
-      height: 40,
-      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: p.line))),
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        children: [
-          for (var i = 0; i < chips.length; i++) ...[
-            if (i > 0) Center(child: Container(width: 1, height: 14, margin: const EdgeInsets.symmetric(horizontal: 6), color: p.line2)),
-            chips[i],
-          ],
-        ],
-      ),
-    );
+  List<Widget> windows(UsageWindow? five, UsageWindow? week, Color fg) {
+    Widget win(String label, UsageWindow w) => Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.center, children: [
+          const SizedBox(width: 8),
+          Text(label, style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.w600)),
+          const SizedBox(width: 4),
+          Text('${(w.used * 100).round()}', style: readoutStyle(16, color: fg)),
+          Text('%', style: TextStyle(color: fg, fontSize: 10.5, fontWeight: FontWeight.w700)),
+        ]);
+    return [if (five != null) win('5 soat', five), if (week != null) win('hafta', week)];
   }
+
+  KeyTone toneFor(UsageWindow? five, UsageWindow? week) {
+    final worst = [five?.used ?? 0, week?.used ?? 0].reduce((x, y) => x > y ? x : y);
+    return worst >= 0.9 ? KeyTone.danger : KeyTone.signal;
+  }
+
+  if (a.has(Agent.claude) || a.bridged) {
+    final u = a.claudeUsage;
+    if (!a.bridged) {
+      chips.add(StatChip(label: 'Claude', icon: agentIcon(Agent.claude), onTap: open, children: [
+        const SizedBox(width: 7),
+        Text('limitni ulash', style: TextStyle(color: p.ink, fontSize: 11.5, fontWeight: FontWeight.w600, decoration: TextDecoration.underline, decorationThickness: 1.5)),
+      ]));
+    } else if (u != null && (u.five != null || u.week != null)) {
+      final five = u.five?.now, week = u.week?.now;
+      final tone = toneFor(five, week);
+      final fg = keyColors(p, tone).$2;
+      final stale = nowMs() - u.t > _staleMs;
+      chips.add(Opacity(
+        opacity: stale ? 0.7 : 1,
+        child: StatChip(label: 'Claude', icon: agentIcon(Agent.claude), tone: tone, onTap: open, children: windows(five, week, fg)),
+      ));
+    } else {
+      chips.add(StatChip(label: 'Claude', icon: agentIcon(Agent.claude), value: '–', onTap: open));
+    }
+  }
+  if (a.agyPath != null) {
+    final w = agyWindows(a.agyUsage);
+    if (a.agyUsage != null) {
+      final tone = toneFor(w.five, w.week);
+      chips.add(StatChip(label: 'agy', icon: agentIcon(Agent.agy), tone: tone, onTap: open, children: windows(w.five, w.week, keyColors(p, tone).$2)));
+    } else if (a.agyBusy) {
+      chips.add(StatChip(label: 'agy', icon: agentIcon(Agent.agy), onTap: open, children: [
+        const SizedBox(width: 8),
+        SizedBox(width: 11, height: 11, child: CircularProgressIndicator(strokeWidth: 1.6, color: p.ink)),
+      ]));
+    } else if (a.agyError != null) {
+      chips.add(StatChip(label: 'agy', icon: agentIcon(Agent.agy), onTap: open, children: [
+        const SizedBox(width: 7),
+        Text(a.agyError!.code == 'AUTH' ? 'kirilmagan' : 'xato', style: TextStyle(color: p.err, fontSize: 11.5, fontWeight: FontWeight.w700)),
+      ]));
+    }
+  }
+  return chips;
 }
 
 /* ---------------- details sheet ---------------- */
@@ -210,13 +178,13 @@ class _AgentsSheetBodyState extends State<_AgentsSheetBody> {
           padding: const EdgeInsets.only(bottom: 4),
           child: Row(children: [
             Container(
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(color: p.hover, borderRadius: BorderRadius.circular(8)),
-              child: Icon(ic, size: 16, color: p.fg2),
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(color: p.key2, borderRadius: BorderRadius.circular(9), border: Border.all(color: p.stroke, width: 1.4)),
+              child: Icon(ic, size: 17, color: p.ink),
             ),
-            const SizedBox(width: 10),
-            Expanded(child: Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600))),
+            const SizedBox(width: 11),
+            Expanded(child: Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700))),
             ...trailing,
           ]),
         );
@@ -229,9 +197,9 @@ class _AgentsSheetBodyState extends State<_AgentsSheetBody> {
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: Row(children: [
-              Expanded(child: Btn(agentLabel(k), icon: agentIcon(k), kind: BtnKind.primary, onTap: () => _launch(k))),
+              Expanded(child: Btn(agentLabel(k), icon: agentIcon(k), kind: BtnKind.primary, expand: true, onTap: () => _launch(k))),
               const SizedBox(width: 8),
-              Btn('Oxirgi suhbat', icon: Icons.history_rounded, onTap: () => _launch(k, resume: true)),
+              Btn('Davom ettirish', icon: Icons.history_rounded, onTap: () => _launch(k, resume: true)),
             ]),
           ),
       ]));
@@ -248,11 +216,11 @@ class _AgentsSheetBodyState extends State<_AgentsSheetBody> {
 
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
       Row(children: [
-        const Text('AI agentlar', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+        const Text('AI agentlar', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w700)),
         const SizedBox(width: 8),
-        Expanded(child: Text(s.server.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: p.fg3, fontSize: 13))),
+        Expanded(child: Text(s.server.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: p.ink3, fontSize: 13.5))),
       ]),
-      const SizedBox(height: 14),
+      const SizedBox(height: 16),
       for (var i = 0; i < sections.length; i++) ...[
         if (i > 0) Padding(padding: const EdgeInsets.symmetric(vertical: 12), child: Divider(height: 1, color: p.line)),
         sections[i],
@@ -267,13 +235,13 @@ class _AgentsSheetBodyState extends State<_AgentsSheetBody> {
     return Padding(
       padding: const EdgeInsets.only(top: 12),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Row(children: [
-          Expanded(child: Text(label, style: TextStyle(color: p.fg2, fontSize: 14))),
-          Text('${(w.used * 100).round()}%', style: TextStyle(fontWeight: FontWeight.w600, color: w.used >= 0.75 ? _tone(p, w.used) : p.fg, fontFeatures: const [FontFeature.tabularFigures()])),
-          Text(' ishlatilgan', style: TextStyle(color: p.fg3, fontSize: 12)),
+        Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          Expanded(child: Text(label, style: TextStyle(color: p.ink2, fontSize: 14.5, fontWeight: FontWeight.w500))),
+          Text('${(w.used * 100).round()}', style: dotStyle(22, color: w.used >= 0.75 ? _tone(p, w.used) : p.ink)),
+          Text('% ishlatilgan', style: TextStyle(color: p.ink3, fontSize: 12.5)),
         ]),
         const SizedBox(height: 7),
-        LayoutBuilder(builder: (ctx, c) => _Meter(w.used, width: c.maxWidth, height: 6)),
+        LayoutBuilder(builder: (ctx, c) => _Meter(w.used, width: c.maxWidth, height: 9)),
         if (when != null || extra != null) ...[
           const SizedBox(height: 6),
           Text([when, extra].whereType<String>().join(' · '), style: TextStyle(color: p.fg3, fontSize: 12)),
@@ -304,6 +272,30 @@ class _AgentsSheetBodyState extends State<_AgentsSheetBody> {
     final u = a.claudeUsage;
     final now = nowMs();
     final snap = s.active?.session == null ? null : a.claudeSessions[s.active!.session];
+    // What Claude does in each terminal (from its hooks).
+    final states = <Widget>[
+      for (var i = 0; i < s.conn.shells.length; i++)
+        if (s.claudeIn(s.conn.shells[i]) case final c?)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Row(children: [
+              Container(
+                width: 26,
+                height: 26,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(color: c.state == ClaudeState.wait ? p.signal : p.key, borderRadius: BorderRadius.circular(7), border: Border.all(color: p.stroke, width: 1.4)),
+                child: Text('${i + 1}', style: dotStyle(15, color: p.ink)),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  c.state == ClaudeState.wait ? waitText(c.ev) : c.state == ClaudeState.done ? 'tugadi · ${fmtAgo(c.ev.t)}' : 'ishlayapti…',
+                  style: TextStyle(color: c.state == ClaudeState.wait ? p.ink : p.ink2, fontWeight: c.state == ClaudeState.wait ? FontWeight.w600 : FontWeight.w400),
+                ),
+              ),
+            ]),
+          ),
+    ];
     final facts = [
       if (snap?.model != null) snap!.model!,
       if (snap?.ctx != null) 'kontekst ${snap!.ctx!.round()}%',
@@ -334,9 +326,21 @@ class _AgentsSheetBodyState extends State<_AgentsSheetBody> {
         Padding(
           padding: const EdgeInsets.only(top: 12),
           child: Row(children: [
-            Icon(Icons.terminal_rounded, size: 14, color: p.fg3),
+            Icon(Icons.terminal_rounded, size: 15, color: p.ink3),
             const SizedBox(width: 6),
-            Expanded(child: Text(facts.join(' · '), style: TextStyle(color: p.fg2, fontSize: 12.5))),
+            Expanded(child: Text(facts.join(' · '), style: TextStyle(color: p.ink2, fontSize: 13))),
+          ]),
+        ),
+      ...states,
+      if (!a.hooks)
+        Container(
+          margin: const EdgeInsets.only(top: 14),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(color: p.well, borderRadius: BorderRadius.circular(12), border: Border.all(color: p.line2, width: 1.4)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Yangi: har bir terminalda Claude nima qilayotgani — ishlayapti, ruxsat so‘rayapti yoki tugadi — ko‘rinadi.', style: TextStyle(color: p.ink2, height: 1.45)),
+            const SizedBox(height: 10),
+            Btn('Yoqish', kind: BtnKind.primary, small: true, busy: _busy, onTap: () => _run(a.installClaude, 'Yoqildi — Claude’ning keyingi xabaridan boshlab holati ko‘rinadi')),
           ]),
         ),
     ]);

@@ -35,14 +35,14 @@ class PultApp extends StatelessWidget {
           debugShowCheckedModeBanner: false,
           navigatorKey: app.navKey,
           themeMode: mode,
-          theme: buildTheme(Pal.light),
-          darkTheme: buildTheme(Pal.dark),
+          theme: buildTheme(Pal.light(signal: app.store.settings.signal, body: app.store.settings.body)),
+          darkTheme: buildTheme(Pal.night(signal: app.store.settings.signal)),
           builder: (context, child) {
             final p = context.pal;
             SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
               statusBarColor: Colors.transparent,
               statusBarIconBrightness: p.isDark ? Brightness.light : Brightness.dark,
-              systemNavigationBarColor: p.bg,
+              systemNavigationBarColor: p.body,
               systemNavigationBarIconBrightness: p.isDark ? Brightness.light : Brightness.dark,
             ));
             return child!;

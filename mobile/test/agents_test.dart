@@ -115,4 +115,60 @@ void main() {
     expect(bridgeScript, r.stdout);
     expect(bridgeScript, startsWith('#!/bin/sh\n# pult-bridge v$bridgeVersion\n'));
   });
+
+  test('hook script and hook settings are the same as the desktop app', () async {
+    final js = File('../src/main/agents.js');
+    const probe = '''
+const a = require(process.argv[1]);
+const s = { statusLine: { type: 'command', command: 'x' }, hooks: { Stop: [{ hooks: [{ type: 'command', command: 'say done' }] }] } };
+a.addEventHooks(s);
+const added = JSON.stringify(s);
+a.removeEventHooks(s);
+process.stdout.write(JSON.stringify({ script: a.EVENT_SCRIPT, version: a.BRIDGE_VERSION, added: JSON.parse(added), removed: s }));
+''';
+    ProcessResult? r;
+    try {
+      r = await Process.run('node', ['-e', probe, js.absolute.path], stdoutEncoding: utf8);
+    } on ProcessException {
+      r = null;
+    }
+    if (r == null || r.exitCode != 0) {
+      markTestSkipped('node or ../src/main/agents.js not available');
+      return;
+    }
+    final desk = jsonDecode(r.stdout as String) as Map<String, dynamic>;
+    expect(eventScript, desk['script']);
+    expect(bridgeVersion, desk['version']);
+
+    final settings = <String, dynamic>{
+      'statusLine': {'type': 'command', 'command': 'x'},
+      'hooks': {
+        'Stop': [
+          {
+            'hooks': [
+              {'type': 'command', 'command': 'say done'},
+            ],
+          },
+        ],
+      },
+    };
+    addEventHooks(settings);
+    expect(jsonDecode(jsonEncode(settings)), desk['added']);
+    addEventHooks(settings); // twice: nothing new
+    expect(jsonDecode(jsonEncode(settings)), desk['added']);
+    expect(removeEventHooks(settings), isTrue);
+    expect(jsonDecode(jsonEncode(settings)), desk['removed']);
+    expect(removeEventHooks(settings), isFalse);
+  });
+
+  test('parseClaudeEvent', () {
+    final ev = parseClaudeEvent('{"t":1700000000,"e":"wait","d":{"message":"Claude needs your permission to use Bash","notification_type":"permission_prompt"}}')!;
+    expect(ev.e, 'wait');
+    expect(ev.t, 1700000000000);
+    expect(ev.kind, 'permission_prompt');
+    expect(ev.waiting, isTrue);
+    expect(parseClaudeEvent('{"t":1,"e":"prompt","d":null}')!.working, isTrue);
+    expect(parseClaudeEvent('nope'), isNull);
+    expect(parseClaudeEvent('{"t":1}'), isNull);
+  });
 }

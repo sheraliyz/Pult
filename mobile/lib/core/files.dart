@@ -199,6 +199,19 @@ class FilesController extends ChangeNotifier {
     }
   }
 
+  /// A whole (small) file as bytes — images for the viewer.
+  Future<Uint8List> readBytes(String p, {int maxBytes = 25 * 1024 * 1024}) async {
+    final sftp = await conn.sftp();
+    final size = (await sftp.stat(p)).size ?? 0;
+    if (size > maxBytes) throw ConnError('TOO_BIG', 'Fayl ko‘rish uchun juda katta (${maxBytes ~/ (1024 * 1024)} MB dan ortiq)');
+    final f = await sftp.open(p);
+    try {
+      return await f.readBytes();
+    } finally {
+      await f.close();
+    }
+  }
+
   Future<void> writeText(String p, String text) async {
     final f = await (await conn.sftp()).open(p, mode: SftpFileOpenMode.create | SftpFileOpenMode.write | SftpFileOpenMode.truncate);
     try {

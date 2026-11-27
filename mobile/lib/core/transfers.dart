@@ -1,7 +1,8 @@
-// Upload / download engine. Many SFTP requests stay in flight (fast on mobile
-// latency) and each file remembers the last contiguous byte that is safely on
-// the other side: when the link drops, the job waits for the reconnect and
-// resumes from there instead of starting over.
+// Upload / download engine. Several SFTP requests stay in flight (fast on
+// mobile latency) — as many as the link takes without the ping rising — and
+// each file remembers the last contiguous byte that is safely on the other
+// side: when the link drops, the job waits for the reconnect and resumes from
+// there instead of starting over.
 
 import 'dart:async';
 import 'dart:io';
@@ -14,8 +15,76 @@ import 'connection.dart';
 import 'format.dart';
 
 const _chunk = 32 * 1024;
-const _inFlight = 48;
 const _maxActive = 2;
+
+/* ---------------- pacing ---------------- */
+
+// How many chunks may be in flight on one SSH connection. Terminals, the ping
+// and every other channel share the link with the transfer, and every byte
+// queued ahead of a keystroke delays it. So the pacer watches the real ping
+// (sent every 250 ms while files move): when it rises _targetMs above the
+// quiet ping (the lowest of the last minutes), fewer chunks go out; when it stays low, more do, up to
+// _maxWindow, which still fills a long fat link. Without ping replies a
+// moderate fixed window is used. Same as the desktop app (transfers.js).
+const _targetMs = 60;
+const _minWindow = 2;
+const _maxWindow = 64;
+const _fallbackWindow = 16;
+
+class Pacer {
+  Pacer({this.fast});
+
+  /// "Maksimal tezlik": no pacing.
+  final bool Function()? fast;
+  double window = 8;
+  int inflight = 0;
+  int lastPing = 0, lastCut = 0;
+  final waiters = <void Function()>{};
+
+  int get limit {
+    if (fast?.call() ?? false) return _maxWindow;
+    return nowMs() - lastPing > 3000 ? _fallbackWindow : window.floor();
+  }
+
+  bool get canSend => inflight < limit;
+
+  void start() => inflight++;
+
+  void finish() {
+    inflight = max(0, inflight - 1);
+    wake();
+  }
+
+  /// Let pipelines waiting for a slot continue.
+  void wake() {
+    for (final run in waiters.toList()) {
+      if (!canSend) break;
+      waiters.remove(run);
+      run();
+    }
+  }
+
+  /// One ping round trip (ms) on this connection; [quiet]: its ping with
+  /// nothing queued (see Connection.quietPing).
+  void onPing(int rtt, int quiet) {
+    final now = nowMs();
+    lastPing = now;
+    final delay = rtt - min(quiet, rtt);
+    if (delay > _targetMs) {
+      // A queue is building: back off (harder the longer it is), then let it drain.
+      if (now - lastCut > 400) {
+        window *= delay > 3 * _targetMs ? 0.6 : 0.8;
+        lastCut = now;
+      }
+    } else if (delay < _targetMs / 2) {
+      window += max(1, window * 0.15);
+    } else {
+      window += 0.5;
+    }
+    window = window.clamp(_minWindow.toDouble(), _maxWindow.toDouble());
+    wake();
+  }
+}
 
 enum JobState { queued, running, waiting, done, error, cancelled }
 
@@ -53,30 +122,35 @@ class Job {
   double get progress => totalBytes == 0 ? (state == JobState.done ? 1 : 0) : doneBytes / totalBytes;
 }
 
-/// Bytes [start, size) through `chunk(off, len)` with bounded concurrency;
-/// `progress(confirmed)` gets the end of the contiguous completed prefix.
-Future<void> _pipeline(int start, int size, Future<void> Function(int off, int len) chunk, void Function(int) progress, bool Function() cancelled) {
+/// Bytes [start, size) through `chunk(off, len)`, as many at once as the
+/// connection's [pacer] allows; `progress(confirmed)` gets the end of the
+/// contiguous completed prefix.
+Future<void> pipeline(int start, int size, Future<void> Function(int off, int len) chunk, void Function(int) progress, bool Function() cancelled, Pacer pacer) {
   final done = Completer<void>();
   var pos = start;
   var active = 0;
   final pending = SplayTreeSetLite();
+  late void Function() launch;
   void finish([Object? err]) {
     if (done.isCompleted) return;
+    pacer.waiters.remove(launch);
     err == null ? done.complete() : done.completeError(err);
   }
 
-  void launch() {
+  launch = () {
     if (done.isCompleted) return;
     if (cancelled()) return finish(_Cancelled());
-    while (active < _inFlight && pos < size) {
+    while (pos < size && pacer.canSend) {
       final off = pos;
       final len = min(_chunk, size - off);
       pos += len;
       active++;
       pending.add(off);
+      pacer.start();
       chunk(off, len).then((_) {
         active--;
         pending.remove(off);
+        pacer.finish();
         if (done.isCompleted) return;
         progress(pending.isEmpty ? pos : pending.first);
         if (pos >= size && active == 0) {
@@ -84,11 +158,16 @@ Future<void> _pipeline(int start, int size, Future<void> Function(int off, int l
         } else {
           launch();
         }
-      }, onError: (Object e) => finish(e));
+      }, onError: (Object e) {
+        active--;
+        pacer.finish();
+        finish(e);
+      });
     }
-    if (pos >= size && active == 0) finish();
-  }
-
+    if (pos >= size && active == 0) return finish();
+    // Out of slots: the next chunk to finish (on any transfer) wakes us.
+    if (pos < size) pacer.waiters.add(launch);
+  };
   launch();
   return done.future;
 }
@@ -106,6 +185,26 @@ class Transfers extends ChangeNotifier {
   final jobs = <Job>[];
   int _seq = 0;
   Timer? _emit;
+
+  /// Settings → "Maksimal tezlik": no pacing (the ping may rise).
+  bool fast = false;
+  final _pacers = <Connection, (Pacer, void Function(int))>{};
+
+  Pacer _pacer(Connection conn) {
+    final known = _pacers[conn];
+    if (known != null) return known.$1;
+    final p = Pacer(fast: () => fast);
+    void listen(int rtt) => p.onPing(rtt, conn.quietPing ?? rtt);
+    conn.pongs.add(listen);
+    _pacers[conn] = (p, listen);
+    return p;
+  }
+
+  /// Fast pings feed the pacer only while this connection has files moving.
+  void _updateFastPing(Connection conn) {
+    final busy = jobs.any((j) => j.conn == conn && (j.planning || j.active));
+    conn.setFastPing(busy);
+  }
 
   void Function(Job job)? onDone;
 
@@ -159,6 +258,9 @@ class Transfers extends ChangeNotifier {
     for (final j in jobs.where((j) => j.conn == conn).toList()) {
       cancel(j);
     }
+    final p = _pacers.remove(conn);
+    if (p != null) conn.pongs.remove(p.$2);
+    conn.setFastPing(false);
   }
 
   void clearFinished() {
@@ -179,6 +281,8 @@ class Transfers extends ChangeNotifier {
 
   Future<void> _run(Job j) async {
     j.planning = true;
+    _pacer(j.conn);
+    _updateFastPing(j.conn);
     try {
       j.state = JobState.running;
       _changed(now: true);
@@ -211,6 +315,7 @@ class Transfers extends ChangeNotifier {
       _changed(now: true);
     } finally {
       j.planning = false;
+      _updateFastPing(j.conn);
       _pump();
     }
   }
@@ -346,12 +451,12 @@ class Transfers extends ChangeNotifier {
     final file = await sftp.open(f.remote, mode: mode);
     j.open.add(file);
     try {
-      await _pipeline(f.done, f.size, (off, len) async {
+      await pipeline(f.done, f.size, (off, len) async {
         raf.setPositionSync(off);
         final data = raf.readSync(len);
         if (data.length != len) throw Exception('Fayl o‘qish paytida o‘zgardi');
         await file.writeBytes(data, offset: off);
-      }, (c) => _progress(j, f, c), () => j.cancelled);
+      }, (c) => _progress(j, f, c), () => j.cancelled, _pacer(j.conn));
     } finally {
       j.open.remove(file);
       await file.close().catchError((_) {});
@@ -364,12 +469,12 @@ class Transfers extends ChangeNotifier {
     final file = await sftp.open(f.remote);
     j.open.add(file);
     try {
-      await _pipeline(f.done, f.size, (off, len) async {
+      await pipeline(f.done, f.size, (off, len) async {
         final Uint8List data = await file.readBytes(length: len, offset: off);
         if (data.isEmpty) return; // file shrank on the server
         out.setPositionSync(off);
         out.writeFromSync(data);
-      }, (c) => _progress(j, f, c), () => j.cancelled);
+      }, (c) => _progress(j, f, c), () => j.cancelled, _pacer(j.conn));
     } finally {
       j.open.remove(file);
       await file.close().catchError((_) {});

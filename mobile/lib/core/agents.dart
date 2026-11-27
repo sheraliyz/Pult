@@ -6,6 +6,9 @@
 //    (5-hour and weekly windows). With the user's consent Pult points the
 //    status line at ~/.pult/bin/claude-statusline, which saves a copy to
 //    ~/.pult/state and then runs the user's own status line, if any.
+//  * Claude Code hooks (UserPromptSubmit, PostToolUse, Notification, Stop,
+//    SessionEnd) run ~/.pult/bin/claude-event, which notes what Claude is
+//    doing in each terminal: working, waiting for you, done.
 //  * agy reports its quota through `agy -p /usage --output-format json`.
 //
 // Panes and state files come through the connection's monitor channel.
@@ -21,8 +24,13 @@ import 'format.dart';
 
 enum Agent { claude, agy }
 
-const bridgeVersion = 1;
+const bridgeVersion = 2;
 const bridgeCommand = 'sh ~/.pult/bin/claude-statusline';
+const eventCommand = 'sh ~/.pult/bin/claude-event';
+
+/// Claude Code hook event → the tag the event script records. PostToolUse
+/// marks "working again" after a permission was granted.
+const hookEvents = {'UserPromptSubmit': 'prompt', 'PostToolUse': 'tool', 'Notification': 'wait', 'Stop': 'done', 'SessionEnd': 'end'};
 
 const _detectScript = 'P="\$HOME/.local/bin:\$HOME/bin:\$HOME/.claude/local:\$HOME/.npm-global/bin:\$HOME/.bun/bin:\$HOME/.volta/bin:/usr/local/bin:/opt/homebrew/bin"; '
     'for x in "\$HOME"/.nvm/versions/node/*/bin; do [ -d "\$x" ] && P="\$P:\$x"; done; '
@@ -30,14 +38,15 @@ const _detectScript = 'P="\$HOME/.local/bin:\$HOME/bin:\$HOME/.claude/local:\$HO
     'echo "C \$(command -v claude 2>/dev/null)"; '
     'echo "A \$(command -v agy 2>/dev/null)"; '
     "if grep -q 'pult/bin/claude-statusline' \"\$HOME/.claude/settings.json\" 2>/dev/null; then echo \"B 1\"; else echo \"B 0\"; fi; "
+    "if grep -q 'pult/bin/claude-event' \"\$HOME/.claude/settings.json\" 2>/dev/null; then echo \"K 1\"; else echo \"K 0\"; fi; "
     r"sed -n 's/^# pult-bridge v\([0-9][0-9]*\).*/V \1/p' " '"\$HOME/.pult/bin/claude-statusline" 2>/dev/null; '
-    "find \"\$HOME/.pult/state\" -name 'claude.*.json' -mtime +14 -exec rm -f {} + 2>/dev/null; "
+    "find \"\$HOME/.pult/state\" \\( -name 'claude.*.json' -o -name 'event.*.json' \\) -mtime +14 -exec rm -f {} + 2>/dev/null; "
     'true';
 
 /// Claude Code's status line on the server (POSIX sh, no jq). Byte for byte
 /// the script the desktop app installs.
 const bridgeScript = r'''#!/bin/sh
-# pult-bridge v1
+# pult-bridge v2
 # Pult: Claude Code status line (https://github.com/sheraliyz/pult)
 # Claude Code passes session JSON on stdin. A copy goes to ~/.pult/state so
 # Pult can show the plan's usage limits (5-hour and weekly windows). Then your
@@ -73,8 +82,31 @@ w=$(num seven_day used_percentage)
 printf '%s\n' "$o"
 ''';
 
+/// Claude Code hook (POSIX sh). Byte for byte the desktop app's EVENT_SCRIPT.
+/// Must stay silent and always exit 0: output of some hooks is fed back to
+/// Claude, and exit code 2 would block it.
+const eventScript = r'''#!/bin/sh
+# pult-event v1
+# Pult: Claude Code hook (https://github.com/sheraliyz/pult). Notes what Claude
+# is doing in this terminal (working / waiting for you / done) in ~/.pult/state
+# so Pult can show it and notify you. Prints nothing, never blocks Claude.
+# To undo: Pult -> status bar -> Claude -> "Uzish" (restores your settings).
+in=$(cat | tr -d '\r\n')
+d="$HOME/.pult/state"
+k=claude
+if [ -n "$TMUX" ]; then
+  s=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#{session_name}' 2>/dev/null | tr -c '\nA-Za-z0-9_.-' '_')
+  [ -n "$s" ] && k="$s"
+fi
+mkdir -p "$d" 2>/dev/null || exit 0
+printf '{"t":%s,"e":"%s","d":%s}\n' "$(date +%s)" "${1:-x}" "${in:-null}" > "$d/event.$k.json.$$" 2>/dev/null &&
+  mv -f "$d/event.$k.json.$$" "$d/event.$k.json" 2>/dev/null
+exit 0
+''';
+
 const _rel = (
   script: '.pult/bin/claude-statusline',
+  event: '.pult/bin/claude-event',
   next: '.pult/claude-statusline.next',
   meta: '.pult/claude-bridge.json',
   state: '.pult/state',
@@ -107,6 +139,22 @@ class ClaudeSnapshot {
   final double? ctx, cost;
   final UsageWindow? five, week, spend;
   bool get hasLimits => five != null || week != null || spend != null;
+}
+
+/// What Claude did last in one terminal (from the hook script).
+/// [e]: prompt | tool | wait | done | end. [kind]: Claude's notification type
+/// (permission_prompt, idle_prompt…), [message]: its text.
+class ClaudeEvent {
+  const ClaudeEvent({required this.e, required this.t, this.message, this.kind});
+  final String e;
+  final int t; // epoch ms
+  final String? message, kind;
+
+  /// Claude is working on something (a prompt went in, a tool just ran).
+  bool get working => e == 'prompt' || e == 'tool';
+
+  /// Claude waits for you: a permission request or a question.
+  bool get waiting => e == 'wait' && kind != 'idle_prompt';
 }
 
 class AgyBucket {
@@ -266,6 +314,79 @@ Map<String, dynamic> parseSettings(String? text) {
 }
 
 bool _isBridge(Object? cmd) => cmd is String && cmd.contains('pult/bin/claude-statusline');
+bool _isEventHook(Object? cmd) => cmd is String && cmd.contains('pult/bin/claude-event');
+
+/// An event file written by the hook script (same as the desktop parser).
+ClaudeEvent? parseClaudeEvent(String text) {
+  Object? o;
+  try {
+    o = jsonDecode(text.trim());
+  } catch (_) {
+    return null;
+  }
+  if (o is! Map || o['e'] is! String) return null;
+  final d = o['d'] is Map ? o['d'] as Map : const {};
+  final t = _num(o['t']);
+  final msg = d['message'];
+  return ClaudeEvent(
+    e: o['e'] as String,
+    t: t != null && t > 0 ? (t * 1000).round() : 0,
+    message: msg is String ? (msg.length > 300 ? msg.substring(0, 300) : msg) : null,
+    kind: d['notification_type'] is String ? d['notification_type'] as String : null,
+  );
+}
+
+/// Add Pult's hooks to Claude Code settings (keeps everything else).
+void addEventHooks(Map<String, dynamic> settings) {
+  final hooks = settings['hooks'] is Map ? Map<String, dynamic>.from(settings['hooks'] as Map) : <String, dynamic>{};
+  hookEvents.forEach((event, tag) {
+    final groups = hooks[event] is List ? List<dynamic>.from(hooks[event] as List) : <dynamic>[];
+    final has = groups.any((g) => g is Map && g['hooks'] is List && (g['hooks'] as List).any((x) => x is Map && _isEventHook(x['command'])));
+    if (!has) {
+      groups.add({
+        if (event == 'PostToolUse') 'matcher': '*',
+        'hooks': [
+          {'type': 'command', 'command': '$eventCommand $tag', 'timeout': 5},
+        ],
+      });
+    }
+    hooks[event] = groups;
+  });
+  settings['hooks'] = hooks;
+}
+
+/// Remove only Pult's hooks; drop what becomes empty. True when something changed.
+bool removeEventHooks(Map<String, dynamic> settings) {
+  final raw = settings['hooks'];
+  if (raw is! Map) return false;
+  final hooks = Map<String, dynamic>.from(raw);
+  var touched = false;
+  for (final event in hooks.keys.toList()) {
+    final groups = hooks[event];
+    if (groups is! List) continue;
+    final kept = <dynamic>[];
+    for (final g in groups) {
+      if (g is! Map || g['hooks'] is! List) {
+        kept.add(g);
+        continue;
+      }
+      final inner = (g['hooks'] as List).where((x) => !(x is Map && _isEventHook(x['command']))).toList();
+      if (inner.length != (g['hooks'] as List).length) touched = true;
+      if (inner.isNotEmpty) kept.add({...Map<String, dynamic>.from(g), 'hooks': inner});
+    }
+    if (kept.isNotEmpty) {
+      hooks[event] = kept;
+    } else {
+      hooks.remove(event);
+    }
+  }
+  if (hooks.isEmpty) {
+    settings.remove('hooks');
+  } else {
+    settings['hooks'] = hooks;
+  }
+  return touched;
+}
 
 String _stamp([DateTime? at]) {
   final d = at ?? DateTime.now();
@@ -352,9 +473,24 @@ class Agents extends ChangeNotifier {
   bool detected = false;
   String? claudePath, agyPath;
   bool bridged = false;
+  bool hooks = false; // the hook script is in ~/.claude/settings.json
   int bridgeScriptVersion = 0;
   Map<String, PaneAgent> panes = const {};
   final _snaps = <String, ({String sum, ClaudeSnapshot snap})>{};
+  final _events = <String, ({String sum, ClaudeEvent ev})>{};
+
+  /// What Claude did last, per Pult terminal (tmux session name).
+  Map<String, ClaudeEvent> get claudeEvents => {for (final e in _events.entries) e.key: e.value.ev};
+
+  /// Called when Claude starts waiting for you in [session] (permission, question).
+  void Function(String session, ClaudeEvent ev)? onClaudeWaiting;
+
+  /// Screenshots and tests: an event as if the hook had just run.
+  @visibleForTesting
+  void debugAddEvent(String session, ClaudeEvent ev) {
+    _events[session] = (sum: 'test', ev: ev);
+    _changed();
+  }
 
   List<AgyGroup>? agyUsage;
   int agyAt = 0;
@@ -430,6 +566,7 @@ class Agents extends ChangeNotifier {
     claudePath = val('C');
     agyPath = val('A');
     bridged = val('B') == '1';
+    hooks = val('K') == '1';
     bridgeScriptVersion = int.tryParse(val('V') ?? '') ?? 0;
     detected = true;
     _changed();
@@ -462,8 +599,24 @@ class Agents extends ChangeNotifier {
         if (hadAgy && !hasAgy && agyPath != null && usage()) Timer(const Duration(seconds: 4), refreshAgy);
       }
       final seen = <String>{};
+      final seenEvents = <String>{};
       for (final f in files) {
         final name = f.path.split('/').last;
+        final evName = RegExp(r'^event\.(pult-\d{4})\.json$').firstMatch(name);
+        if (evName != null) {
+          final session = evName.group(1)!;
+          seenEvents.add(session);
+          final known = _events[session];
+          if (known?.sum == f.sum) continue;
+          final text = await conn.monitorFetch(f.path);
+          final ev = text == null ? null : parseClaudeEvent(text);
+          if (ev == null) continue;
+          _events[session] = (sum: f.sum, ev: ev);
+          // A fresh "waiting for you" (not the one already there when Pult connected).
+          if (known != null && ev.waiting && nowMs() - ev.t < 120000) onClaudeWaiting?.call(session, ev);
+          dirty = true;
+          continue;
+        }
         if (!RegExp(r'^claude[.\w-]*\.json$').hasMatch(name)) continue;
         seen.add(name);
         if (_snaps[name]?.sum == f.sum) continue;
@@ -477,6 +630,10 @@ class Agents extends ChangeNotifier {
       final gone = _snaps.keys.where((k) => !seen.contains(k)).toList();
       for (final k in gone) {
         _snaps.remove(k);
+        dirty = true;
+      }
+      for (final k in _events.keys.where((k) => !seenEvents.contains(k)).toList()) {
+        _events.remove(k);
         dirty = true;
       }
       if (dirty) _changed();
@@ -553,6 +710,7 @@ class Agents extends ChangeNotifier {
     final home = await _home();
     await _mkdirp(sftp, '$home/.pult/bin');
     await _writeFile(sftp, '$home/${_rel.script}', utf8.encode(bridgeScript), mode: 0x1ED /* 0755 */);
+    await _writeFile(sftp, '$home/${_rel.event}', utf8.encode(eventScript), mode: 0x1ED);
     bridgeScriptVersion = bridgeVersion;
     _changed();
   }
@@ -578,6 +736,7 @@ class Agents extends ChangeNotifier {
     await _mkdirp(sftp, p(_rel.state));
     await _mkdirp(sftp, p('.claude'));
     await _writeFile(sftp, p(_rel.script), utf8.encode(bridgeScript), mode: 0x1ED);
+    await _writeFile(sftp, p(_rel.event), utf8.encode(eventScript), mode: 0x1ED);
 
     final cur = settings['statusLine'];
     if (!_isBridge(cur is Map ? cur['command'] : null)) {
@@ -597,6 +756,8 @@ class Agents extends ChangeNotifier {
       settings['preferredNotifChannel'] = 'terminal_bell';
       meta['notifChannel'] = true;
     }
+    // Hooks tell Pult what Claude is doing (working / waiting for you / done).
+    addEventHooks(settings);
     meta['v'] = bridgeVersion;
     meta['installedAt'] = DateTime.now().toUtc().toIso8601String();
 
@@ -607,6 +768,7 @@ class Agents extends ChangeNotifier {
     await _writeFile(sftp, p(_rel.meta), utf8.encode('${const JsonEncoder.withIndent('  ').convert(meta)}\n'), mode: 0x180);
 
     bridged = true;
+    hooks = true;
     bridgeScriptVersion = bridgeVersion;
     _changed();
   }
@@ -638,18 +800,19 @@ class Agents extends ChangeNotifier {
       settings.remove('preferredNotifChannel');
       touched = true;
     }
+    if (removeEventHooks(settings)) touched = true;
     if (touched && original != null) {
       final st = await _stat(sftp, settingsPath);
       await _writeAtomic(sftp, settingsPath, '${const JsonEncoder.withIndent('  ').convert(settings)}\n', (st?.mode?.value ?? 0x1A4) & 0x1FF);
     }
-    for (final rel in [_rel.script, _rel.next, _rel.meta]) {
+    for (final rel in [_rel.script, _rel.event, _rel.next, _rel.meta]) {
       try {
         await sftp.remove(p(rel));
       } catch (_) {}
     }
     try {
       for (final e in await sftp.listdir(p(_rel.state))) {
-        if (RegExp(r'^claude.*\.json').hasMatch(e.filename)) {
+        if (RegExp(r'^(claude|event)\..*\.json').hasMatch(e.filename)) {
           try {
             await sftp.remove(p('${_rel.state}/${e.filename}'));
           } catch (_) {}
@@ -657,7 +820,9 @@ class Agents extends ChangeNotifier {
       }
     } catch (_) {}
     _snaps.clear();
+    _events.clear();
     bridged = false;
+    hooks = false;
     bridgeScriptVersion = 0;
     _changed();
   }

@@ -20,14 +20,20 @@ import 'package:pult/ui/home_page.dart';
 import 'package:pult/ui/server_form.dart';
 import 'package:pult/ui/agents_ui.dart';
 import 'package:pult/ui/session_page.dart';
+import 'package:pult/ui/settings_sheet.dart';
+import 'package:pult/ui/snippets.dart';
+import 'package:pult/ui/stats_sheet.dart';
+import 'package:pult/core/update.dart';
 
 Future<void> loadFonts() async {
   Future<ByteData> asset(String p) => rootBundle.load(p);
-  await (FontLoader('Inter')
-        ..addFont(asset('assets/fonts/Inter-Regular.ttf'))
-        ..addFont(asset('assets/fonts/Inter-Medium.ttf'))
-        ..addFont(asset('assets/fonts/Inter-SemiBold.ttf')))
+  await (FontLoader('Geist')
+        ..addFont(asset('assets/fonts/Geist-Regular.ttf'))
+        ..addFont(asset('assets/fonts/Geist-Medium.ttf'))
+        ..addFont(asset('assets/fonts/Geist-SemiBold.ttf'))
+        ..addFont(asset('assets/fonts/Geist-Bold.ttf')))
       .load();
+  await (FontLoader('Doto')..addFont(asset('assets/fonts/Doto-Black.ttf'))).load();
   await (FontLoader('JetBrainsMono')
         ..addFont(asset('assets/fonts/JetBrainsMono-Regular.ttf'))
         ..addFont(asset('assets/fonts/JetBrainsMono-Bold.ttf')))
@@ -106,12 +112,12 @@ void main() {
     app = AppState(store);
   });
 
-  Future<void> shoot(WidgetTester t, Widget home, String name, {Pal pal = Pal.dark, double keyboard = 0, String text = demoTerminal}) async {
+  Future<void> shoot(WidgetTester t, Widget home, String name, {Pal? pal, double keyboard = 0, String text = demoTerminal}) async {
     t.view.physicalSize = const Size(1170, 2532);
     t.view.devicePixelRatio = 3;
     t.view.padding = const FakeViewPadding(top: 141, bottom: 102);
     t.view.viewInsets = FakeViewPadding(bottom: keyboard * 3);
-    final app = MaterialApp(debugShowCheckedModeBanner: false, theme: buildTheme(pal), home: home);
+    final app = MaterialApp(debugShowCheckedModeBanner: false, theme: buildTheme(pal ?? Pal.light()), home: home);
     if (home is EditorPage) {
       // The code editor highlights in a background isolate: build it in real time.
       await t.runAsync(() async {
@@ -143,7 +149,13 @@ void main() {
       ..memUsed = 1600 * 1024 * 1024
       ..memTotal = 3900 * 1024 * 1024
       ..diskUsed = 17 * 1024 * 1024 * 1024
-      ..diskTotal = 40 * 1024 * 1024 * 1024;
+      ..diskTotal = 40 * 1024 * 1024 * 1024
+      ..uptime = 12 * 86400 + 3600;
+    // Five minutes of readings for the graphs.
+    final t0 = DateTime.now().millisecondsSinceEpoch - 150 * 2000;
+    for (var i = 0; i < 150; i++) {
+      conn.samples.add(StatSample(t0 + i * 2000, cpu: 0.08 + 0.06 * ((i * 7) % 11) / 10 + (i > 120 && i < 130 ? 0.35 : 0), mem: 0.40 + 0.01 * ((i ~/ 30) % 3), rtt: 28 + (i * 13) % 17 + (i % 37 == 0 ? 60 : 0)));
+    }
     final sh = RemoteShell(conn, session: 'pult-0001');
     conn.shells
       ..add(sh)
@@ -173,13 +185,18 @@ void main() {
   }
 
   testWidgets('home', (t) async => shoot(t, HomePage(app: app), 'home'));
-  testWidgets('home light', (t) async => shoot(t, HomePage(app: app), 'home-light', pal: Pal.light));
+  testWidgets('home night', (t) async => shoot(t, HomePage(app: app), 'home-night', pal: Pal.night()));
+  testWidgets('home update', (t) async {
+    app.update = const Release(version: '1.3.0', name: '1.3.0', notes: '', page: 'https://github.com', apkUrl: 'https://github.com/x.apk');
+    addTearDown(() => app.update = null);
+    await shoot(t, HomePage(app: app), 'home-update', pal: Pal.light(signal: 'blue', body: 'mint'));
+  });
   testWidgets('form', (t) async => shoot(t, ServerFormPage(store: store), 'form'));
   testWidgets('form key', (t) async => shoot(t, ServerFormPage(store: store, server: store.server('a')), 'form-key'));
   testWidgets('terminal', (t) async => shoot(t, SessionPage(app: app, session: demoSession()), 'terminal'));
   testWidgets('terminal keyboard', (t) async => shoot(t, SessionPage(app: app, session: demoSession()), 'terminal-keys', keyboard: 300));
   testWidgets('files', (t) async => shoot(t, SessionPage(app: app, session: demoSession()..tab = 1), 'files'));
-  testWidgets('files light', (t) async => shoot(t, SessionPage(app: app, session: demoSession()..tab = 1), 'files-light', pal: Pal.light));
+  testWidgets('files night', (t) async => shoot(t, SessionPage(app: app, session: demoSession()..tab = 1), 'files-night', pal: Pal.night()));
   testWidgets('files kinds', (t) async {
     final s = demoSession()..tab = 1;
     s.files.entries = s.files.entries.where((e) => !e.isDir && !const {'index.js', 'docker-compose.yml', 'deploy.sh'}.contains(e.name)).toList();
@@ -202,14 +219,14 @@ void main() {
   });
   testWidgets('editor light', (t) async {
     final s = demoSession();
-    await shoot(t, EditorPage(files: s.files, path: '/root/deploy.sh', text: demoShell), 'editor-light', pal: Pal.light);
+    await shoot(t, EditorPage(files: s.files, path: '/root/deploy.sh', text: demoShell), 'editor-night', pal: Pal.night());
   });
   testWidgets('properties', (t) async {
     final s = demoSession()..tab = 1;
     t.view.physicalSize = const Size(1170, 2532);
     t.view.devicePixelRatio = 3;
     t.view.padding = const FakeViewPadding(top: 141, bottom: 102);
-    await t.pumpWidget(MaterialApp(debugShowCheckedModeBanner: false, theme: buildTheme(Pal.dark), home: SessionPage(app: app, session: s)));
+    await t.pumpWidget(MaterialApp(debugShowCheckedModeBanner: false, theme: buildTheme(Pal.light()), home: SessionPage(app: app, session: s)));
     await t.pump(const Duration(milliseconds: 300));
     showProperties(t.element(find.byType(SessionPage)), s, s.files.entries.firstWhere((e) => e.name == 'Pult.apk'));
     await t.pump(const Duration(milliseconds: 500));
@@ -245,6 +262,8 @@ void main() {
       'claude.pult-0002.json',
       ClaudeSnapshot(t: now - 60000, session: 'pult-0002', model: 'Opus 5.5', ctx: 23, cost: 0.42, five: UsageWindow(0.41, now + 130 * 60000), week: UsageWindow(0.12, now + 3 * 86400000)),
     );
+    s.agents.hooks = true;
+    s.agents.debugAddEvent('pult-0002', ClaudeEvent(e: 'prompt', t: now - 5000));
     s.active = s.conn.shells[1];
     s.conn.shells[2].attention = true; // agy finished while you were here
     return s;
@@ -261,15 +280,15 @@ void main() {
 
   testWidgets('ai terminal', (t) async => shoot(t, SessionPage(app: app, session: aiSession()), 'ai-terminal', text: claudeScreen));
   testWidgets('ai keys', (t) async => shoot(t, SessionPage(app: app, session: aiSession()), 'ai-keys', keyboard: 300, text: claudeScreen));
-  Future<void> sheet(WidgetTester t, String name, Pal pal) async {
-    final s = aiSession();
+  Future<void> sheet(WidgetTester t, String name, Pal pal, {void Function(BuildContext, Session)? open, Session? session}) async {
+    final s = session ?? aiSession();
     t.view.physicalSize = const Size(1170, 2532);
     t.view.devicePixelRatio = 3;
     t.view.padding = const FakeViewPadding(top: 141, bottom: 102);
     await t.pumpWidget(MaterialApp(debugShowCheckedModeBanner: false, theme: buildTheme(pal), home: SessionPage(app: app, session: s)));
     await t.pump(const Duration(milliseconds: 300));
     s.active?.terminal.write(claudeScreen);
-    showAgentsSheet(t.element(find.byType(SessionPage)), s);
+    (open ?? showAgentsSheet)(t.element(find.byType(SessionPage)), s);
     await t.pump(const Duration(milliseconds: 500));
     await t.pump(const Duration(milliseconds: 500));
     await expectLater(find.byType(MaterialApp), matchesGoldenFile('shots/$name.png'));
@@ -277,8 +296,17 @@ void main() {
     await t.pump(const Duration(seconds: 2));
   }
 
-  testWidgets('ai sheet', (t) async => sheet(t, 'ai-sheet', Pal.dark));
-  testWidgets('ai sheet light', (t) async => sheet(t, 'ai-sheet-light', Pal.light));
+  testWidgets('ai sheet', (t) async => sheet(t, 'ai-sheet', Pal.light()));
+  testWidgets('ai sheet night', (t) async => sheet(t, 'ai-sheet-night', Pal.night()));
+  testWidgets('claude waits', (t) async {
+    final s = aiSession();
+    s.agents.debugAddEvent('pult-0002', ClaudeEvent(e: 'wait', t: nowMs() - 3000, message: 'Claude needs your permission to use Bash', kind: 'permission_prompt'));
+    s.active = s.conn.shells[0];
+    await shoot(t, SessionPage(app: app, session: s), 'claude-waits');
+  });
+  testWidgets('stats sheet', (t) async => sheet(t, 'stats-sheet', Pal.light(), session: demoSession(), open: (c, s) => showStats(c, s)));
+  testWidgets('snippets sheet', (t) async => sheet(t, 'snippets-sheet', Pal.light(), session: demoSession(), open: (c, s) => showSnippets(c, s)));
+  testWidgets('settings sheet', (t) async => sheet(t, 'settings-sheet', Pal.light(), session: demoSession(), open: (c, s) => showSettings(c, app)));
 
   testWidgets('reconnecting', (t) async {
     final s = demoSession();

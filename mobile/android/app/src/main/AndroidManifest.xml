@@ -2,6 +2,8 @@
     xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- Updates: the APK of a newer Pult (GitHub Releases) is handed to the installer. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <!-- Files are picked through the system picker: no access to the photo/media library needed. -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" tools:node="remove"/>
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" tools:node="remove"/>
@@ -47,6 +49,15 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- Tunnels and the release page open in the browser (url_launcher). -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="http"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/>
         </intent>
     </queries>
 </manifest>
