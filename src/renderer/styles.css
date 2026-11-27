@@ -4039,3 +4039,778 @@ button.sb-chip:active {
   margin-bottom: 10px;
   color: var(--ink-2);
 }
+
+/* ==========================================================================
+   Claude asks for permission: answer from Pult (session.js answerClaude)
+   ========================================================================== */
+
+.th-answer {
+  display: inline-flex;
+  gap: 6px;
+}
+.th-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1.5px solid #3a3c40;
+  border-radius: 7px;
+  background: #1e1f22;
+  color: #f4f4f1;
+  font: 700 12.5px var(--font);
+  box-shadow: 0 2px 0 #000;
+}
+.th-key:hover {
+  background: #26272b;
+}
+.th-key:active {
+  transform: translateY(2px);
+  box-shadow: none;
+}
+.th-key.yes {
+  border-color: #000;
+  background: var(--signal);
+  color: var(--on-signal);
+}
+.th-key.no {
+  color: #ffb4a8;
+}
+.cl-wait-stack {
+  position: absolute;
+  top: 46px;
+  right: 14px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(430px, calc(100% - 28px));
+  pointer-events: none;
+}
+.cl-wait {
+  padding: 12px 12px 10px;
+  border: 1.5px solid #000;
+  border-radius: 13px;
+  background: #1a1b1d;
+  color: #ecece8;
+  box-shadow: 0 4px 0 #000, 0 18px 40px rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+  animation: pop 0.15s var(--ease);
+}
+.cl-wait-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+}
+.cl-wait-top .ic {
+  color: var(--signal);
+}
+.cl-wait-top span {
+  min-width: 0;
+  overflow: hidden;
+  color: #cfd0cb;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cl-wait-pre {
+  margin: 9px 0 0;
+  padding: 8px 10px;
+  max-height: 96px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #0a0a0b;
+  color: #c9cac5;
+  font: 12px/1.45 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.cl-wait-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+/* ==========================================================================
+   Tizim: services (systemd), Docker, live logs, disk — src/renderer/system.js
+   ========================================================================== */
+
+.pane-sys {
+  display: none;
+  border: 1.5px solid var(--stroke);
+  border-radius: 18px;
+  background: var(--paper);
+  box-shadow: var(--key-shadow);
+  overflow: hidden;
+}
+.session[data-mode='system'] .pane-sys {
+  display: flex;
+  flex: 1;
+}
+.session[data-mode='system'] .pane-files,
+.session[data-mode='system'] .splitter {
+  display: none;
+}
+/* Hidden but still laid out, so xterm can keep measuring itself. */
+.session[data-mode='system'] .pane-term {
+  position: absolute;
+  inset: 14px 18px 12px;
+  visibility: hidden;
+  pointer-events: none;
+}
+.session[data-mode='system'] .tb-divider {
+  display: none;
+}
+
+.key-sm {
+  height: 32px;
+  padding: 0 11px;
+  gap: 6px;
+  border-radius: 9px;
+  font-size: 13px;
+  box-shadow: var(--key-shadow-sm);
+}
+.key-sm:active,
+.key-sm.on {
+  box-shadow: none;
+}
+.key-icon-sm {
+  width: 34px;
+  padding: 0;
+  justify-content: center;
+}
+.key-sm.key-icon-sm.on {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+
+.sy {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  container-type: inline-size;
+}
+.sy-head {
+  display: flex;
+  align-items: center;
+  padding: 14px 16px 12px;
+  border-bottom: 1.5px solid var(--line);
+}
+.sy-tabs {
+  display: flex;
+  gap: 8px;
+}
+.sy-tab {
+  height: 38px;
+  padding: 0 14px;
+  border-radius: 11px;
+  font-size: 14px;
+  box-shadow: var(--key-shadow-sm);
+}
+.sy-tab.on {
+  background: var(--signal);
+  border-color: var(--stroke);
+  color: var(--on-signal);
+  box-shadow: none;
+}
+.sy-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.sy-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.sy-scroll {
+  overflow-y: auto;
+}
+.sy-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  flex-wrap: wrap;
+  border-bottom: 1.5px solid var(--line);
+}
+.sy-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 240px;
+  flex: none;
+}
+.sy-search-wrap > .ic {
+  position: absolute;
+  left: 11px;
+  color: var(--ink-3);
+  pointer-events: none;
+}
+.sy-search {
+  height: 34px;
+  padding-left: 34px;
+  font-size: 13.5px;
+}
+.sy-filters {
+  display: flex;
+  gap: 6px;
+}
+.chip-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1.5px solid var(--stroke);
+  border-radius: 9px;
+  background: var(--key);
+  color: var(--ink);
+  font: 600 13px var(--font);
+  box-shadow: var(--key-shadow-sm);
+}
+.chip-key.on {
+  background: var(--ink);
+  color: var(--on-ink);
+  transform: translateY(2px);
+  box-shadow: none;
+}
+.chip-key.bad .chip-n {
+  background: var(--err);
+  color: #fff;
+}
+.chip-n {
+  min-width: 20px;
+  padding: 2px 5px;
+  border-radius: 6px;
+  background: var(--well);
+  color: var(--ink);
+  font: 700 12px var(--mono);
+  text-align: center;
+}
+.chip-key.on .chip-n {
+  background: var(--on-ink);
+  color: var(--ink);
+}
+.sy-summary {
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 600;
+}
+.sy-bad {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--err);
+}
+
+.sy-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 8px 10px;
+}
+.sy-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 58px;
+  padding: 8px 10px;
+  border-radius: 12px;
+}
+.sy-row:hover {
+  background: var(--hover);
+}
+.sy-row.bad {
+  background: color-mix(in srgb, var(--err) 8%, transparent);
+}
+.sy-dot {
+  width: 11px;
+  height: 11px;
+  border: 1.5px solid var(--stroke);
+  border-radius: 50%;
+  background: var(--key-2);
+  flex: none;
+}
+.sy-dot.ok {
+  background: var(--ok);
+}
+.sy-dot.bad {
+  background: var(--err);
+}
+.sy-dot.warn {
+  background: var(--warn);
+}
+.sy-main {
+  flex: 1;
+  min-width: 0;
+}
+.sy-name {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 14.5px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sy-desc {
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sy-badge {
+  padding: 3px 8px;
+  border: 1.5px solid var(--line-2);
+  border-radius: 7px;
+  color: var(--ink-2);
+  font: 600 12px var(--mono);
+  flex: none;
+}
+.sy-badge.ok {
+  border-color: color-mix(in srgb, var(--ok) 55%, transparent);
+  color: var(--ok);
+}
+.sy-badge.bad {
+  border-color: var(--err);
+  background: var(--err);
+  color: #fff;
+}
+.sy-meta {
+  color: var(--ink-3);
+  font-size: 12.5px;
+  flex: none;
+}
+.sy-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 2px;
+  flex: none;
+}
+.sy-col {
+  width: 190px;
+  min-width: 0;
+  flex: none;
+}
+.sy-status {
+  overflow: hidden;
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sy-ports {
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--ink-3);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sy-res {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  width: 92px;
+  flex: none;
+}
+.sy-res-n {
+  color: var(--ink);
+  font: 700 13px var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.sy-res-n + .sy-res-n {
+  color: var(--ink-3);
+  font-weight: 500;
+  font-size: 12px;
+}
+@container (max-width: 980px) {
+  .sy-enabled,
+  .sy-ports,
+  .sy-res {
+    display: none;
+  }
+  .sy-col {
+    width: 150px;
+  }
+}
+@container (max-width: 760px) {
+  .sy-desc,
+  .sy-col {
+    display: none;
+  }
+  .sy-search-wrap {
+    width: 180px;
+  }
+}
+
+.sy-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex: 1;
+  padding: 48px 24px;
+  text-align: center;
+}
+.sy-empty-ic {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  border: 1.5px solid var(--stroke);
+  border-radius: 14px;
+  background: var(--key-2);
+  color: var(--ink);
+}
+.sy-empty-title {
+  margin-top: 6px;
+  font-size: 16px;
+  font-weight: 700;
+}
+.sy-empty-text {
+  max-width: 420px;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.sy-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 16px;
+  color: var(--ink-2);
+  font-size: 13.5px;
+}
+.sy-note {
+  padding: 10px 2px;
+  color: var(--ink-2);
+  font-size: 13.5px;
+}
+.sy-note.bad {
+  color: var(--err);
+}
+
+/* live logs: a black screen like the terminal's */
+.sy-src {
+  max-width: 300px;
+}
+.sy-src-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sy-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.sy-live-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+.sy-live-dot.off {
+  background: var(--ink-4);
+  box-shadow: none;
+  animation: none;
+}
+.sy-live-dot.bad {
+  background: var(--err);
+  box-shadow: none;
+  animation: none;
+}
+.sy-log-wrap {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  margin: 10px 12px 12px;
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--bezel);
+  box-shadow: 0 3px 0 var(--bezel-shadow);
+}
+.sy-log {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--screen-ring);
+  border-radius: 11px;
+  outline: none;
+  background: var(--screen);
+  color: #d4d4d8;
+  font: 13px/1.55 var(--mono);
+  white-space: pre;
+  user-select: text;
+}
+.sy-log.wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.sy-line.err {
+  color: #ff9b8f;
+}
+.sy-line.warn {
+  color: #f6c86b;
+}
+.sy-stamp {
+  color: #7c8088;
+}
+.sy-line mark {
+  border-radius: 3px;
+  background: var(--signal);
+  color: #121314;
+}
+.sy-more {
+  position: absolute;
+  right: 22px;
+  bottom: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1.5px solid var(--stroke);
+  border-radius: 9px;
+  background: var(--signal);
+  color: var(--on-signal);
+  font: 700 12.5px var(--font);
+  box-shadow: var(--key-shadow-sm);
+}
+.sy-log-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 18px 6px;
+  color: #d4d4d8;
+  font-family: var(--font);
+  white-space: normal;
+}
+.sy-log-empty-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #f4f4f1;
+}
+.sy-log-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.sy-log-hint {
+  max-width: 560px;
+  color: #a3a5a8;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* disk */
+.sy-section {
+  padding: 14px 16px 6px;
+}
+.sy-section + .sy-section {
+  border-top: 1.5px solid var(--line);
+}
+.sy-h {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.sy-h-note {
+  color: var(--ink-3);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.sy-mounts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+  padding-bottom: 8px;
+}
+.sy-mount {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1.5px solid var(--stroke);
+  border-radius: 13px;
+  background: var(--key);
+  color: var(--ink);
+  text-align: left;
+  box-shadow: var(--key-shadow-sm);
+}
+.sy-mount:hover {
+  background: var(--key-hover);
+}
+.sy-mount.on {
+  outline: 3px solid color-mix(in srgb, var(--signal) 55%, transparent);
+  outline-offset: 1px;
+}
+.sy-mount-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.sy-mount-sub {
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+.sy-pct {
+  font: 700 16px var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.sy-pct.warn {
+  color: var(--warn);
+}
+.sy-pct.crit {
+  color: var(--err);
+}
+.sy-bar-track {
+  height: 10px;
+  overflow: hidden;
+  border: 1.5px solid var(--stroke);
+  border-radius: 6px;
+  background: var(--well);
+}
+.sy-bar-fill {
+  height: 100%;
+  background: var(--ink);
+}
+.sy-bar-fill.warn {
+  background: var(--warn);
+}
+.sy-bar-fill.crit {
+  background: var(--err);
+}
+.sy-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.sy-du-total {
+  margin: 0 0 6px 2px;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+.sy-du {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  overflow: hidden;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+.sy-du.dir:hover,
+.sy-du.up:hover {
+  background: var(--hover);
+}
+.sy-du-bar {
+  position: absolute;
+  left: 0;
+  top: 5px;
+  bottom: 5px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--signal) 22%, transparent);
+  pointer-events: none;
+}
+.sy-du-name {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sy-du.file .sy-du-name {
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.sy-du-size {
+  position: relative;
+  width: 90px;
+  font: 700 13.5px var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.sy-du-pct {
+  position: relative;
+  width: 44px;
+  color: var(--ink-3);
+  font: 600 12.5px var(--mono);
+  text-align: right;
+}
+.sy-du > .ic:last-child {
+  position: relative;
+  color: var(--ink-3);
+}
+.sy-big {
+  padding-bottom: 12px;
+}
+.sy-big-ask {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.sy-bigrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+  padding: 0 6px;
+  border-radius: 9px;
+}
+.sy-bigrow:hover {
+  background: var(--hover);
+}
+.sy-big-size {
+  width: 80px;
+  font: 700 13.5px var(--mono);
+  text-align: right;
+  flex: none;
+}
+.sy-big-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

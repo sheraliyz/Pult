@@ -7,6 +7,7 @@
 
 const { Client, utils } = require('ssh2');
 const EventEmitter = require('events');
+const { StringDecoder } = require('string_decoder');
 const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
@@ -516,6 +517,50 @@ class Connection extends EventEmitter {
         stream.on('close', () => {
           clearTimeout(timer);
           resolve({ code, stdout, stderr });
+        });
+      });
+    });
+  }
+
+  /**
+   * A long-running command whose output arrives as it comes (live logs).
+   * stdout and stderr are merged. close() ends it: the command runs under a
+   * watcher that kills it when the channel's stdin closes, so a quiet
+   * `tail -F` does not linger on the server.
+   */
+  stream(script, { onData, onEnd }) {
+    const client = this.client;
+    if (!client || this.state !== 'ready') return Promise.reject(Object.assign(new Error('Server bilan aloqa yo‘q'), { code: 'NOT_CONNECTED' }));
+    const wrapped = `{ ${script} ; } 2>&1 & P=$!; cat >/dev/null; kill $P 2>/dev/null; pkill -P $P 2>/dev/null; true`;
+    return new Promise((resolve, reject) => {
+      client.exec(`sh -c ${shq(wrapped)}`, (err, stream) => {
+        if (err) return reject(err);
+        const out = new StringDecoder('utf8');
+        let code = null;
+        let ended = false;
+        stream.on('data', (d) => onData(out.write(d)));
+        stream.stderr.on('data', (d) => onData(String(d)));
+        stream.on('exit', (c) => (code = c));
+        stream.on('close', () => {
+          if (ended) return;
+          ended = true;
+          onEnd(code);
+        });
+        resolve({
+          close: () => {
+            try {
+              stream.end(); // stdin EOF: the watcher stops the command
+            } catch {
+              // already closed
+            }
+            setTimeout(() => {
+              try {
+                stream.close();
+              } catch {
+                // already closed
+              }
+            }, 300);
+          },
         });
       });
     });

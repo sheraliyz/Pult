@@ -191,6 +191,7 @@ const DEFAULT_SETTINGS = {
   checkUpdates: true, // look for a newer Pult on GitHub Releases
   restoreSessions: true, // reconnect to the servers that were open last time
   restoreHistory: true, // show a re-attached terminal's earlier output (tmux history)
+  serverAlerts: true, // notify when a server's disk is nearly full or its RAM is used up
   downloadDir: '',
   transferPace: 'smooth', // smooth: keep the ping low while files move · fast: no pacing
   // AI agents (Claude Code, agy)

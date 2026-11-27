@@ -553,6 +553,107 @@ function runReal(stream, cmd) {
   });
 }
 
+/* ---------------- server administration (services, Docker, disk, logs) ---------------- */
+
+const MOCK_SERVICES = {
+  'cron.service': { active: 'active', sub: 'running', description: 'Regular background program processing daemon', enabled: 'enabled' },
+  'docker.service': { active: 'active', sub: 'running', description: 'Docker Application Container Engine', enabled: 'enabled' },
+  'fail2ban.service': { active: 'active', sub: 'running', description: 'Fail2Ban Service', enabled: 'enabled' },
+  'nginx.service': { active: 'active', sub: 'running', description: 'A high performance web server and a reverse proxy server', enabled: 'enabled' },
+  'postgresql@16-main.service': { active: 'active', sub: 'running', description: 'PostgreSQL Cluster 16-main', enabled: 'enabled' },
+  'acme-worker.service': { active: 'failed', sub: 'failed', description: 'Acme queue worker', enabled: 'enabled' },
+  'redis-server.service': { active: 'inactive', sub: 'dead', description: 'Advanced key-value store', enabled: 'disabled' },
+  'ssh.service': { active: 'active', sub: 'running', description: 'OpenBSD Secure Shell server', enabled: 'enabled' },
+  'systemd-journald.service': { active: 'active', sub: 'running', description: 'Journal Service', enabled: 'static' },
+  'unattended-upgrades.service': { active: 'active', sub: 'running', description: 'Unattended Upgrades Shutdown', enabled: 'enabled' },
+  'certbot.service': { active: 'inactive', sub: 'dead', description: 'Certbot', enabled: 'static' },
+};
+
+function mockServiceList() {
+  const units = Object.entries(MOCK_SERVICES)
+    .filter(([, s]) => s.enabled !== 'disabled' || s.active !== 'inactive')
+    .map(([u, s]) => `${u} loaded ${s.active} ${s.sub} ${s.description}`);
+  const files = Object.entries(MOCK_SERVICES).map(([u, s]) => `${u} ${s.enabled} enabled`);
+  return `${units.join('\n')}\n@@FILES\n${files.join('\n')}\nsnap.lxd.daemon.service masked enabled\n`;
+}
+
+const MOCK_CONTAINERS = [
+  { ID: '3f1c2a9d8b7e0c4a', Names: 'api', Image: 'ghcr.io/acme/api:2.4.1', State: 'running', Status: 'Up 12 days', Ports: '0.0.0.0:8080->8080/tcp', RunningFor: '12 days ago' },
+  { ID: '9a8b7c6d5e4f1a2b', Names: 'postgres', Image: 'postgres:16', State: 'running', Status: 'Up 12 days (healthy)', Ports: '5432/tcp', RunningFor: '12 days ago' },
+  { ID: '1b2c3d4e5f6a7b8c', Names: 'nginx', Image: 'nginx:1.27', State: 'running', Status: 'Up 12 days', Ports: '0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp', RunningFor: '12 days ago' },
+  { ID: '7c8d9e0f1a2b3c4d', Names: 'worker', Image: 'ghcr.io/acme/worker:2.4.1', State: 'exited', Status: 'Exited (1) 2 hours ago', Ports: '', RunningFor: '3 days ago' },
+];
+
+function mockDu(dir) {
+  const G = 1024 * 1024;
+  const table = {
+    '/': [['var', 118 * G], ['home', 41 * G], ['usr', 9.4 * G], ['opt', 6.2 * G], ['root', 3.1 * G], ['snap', 2.2 * G], ['boot', 0.31 * G], ['etc', 0.012 * G], ['tmp', 0.004 * G]],
+    '/var': [['lib', 92 * G], ['log', 21 * G], ['cache', 4.1 * G], ['backups', 0.9 * G], ['tmp', 0.002 * G]],
+    '/var/lib': [['docker', 71 * G], ['postgresql', 17 * G], ['apt', 2.4 * G], ['snapd', 1.6 * G]],
+    '/var/log': [['journal', 18 * G], ['nginx', 2.1 * G], ['syslog', 0.6 * G], ['auth.log', 0.12 * G]],
+    '/home': [['demo', 41 * G]],
+  };
+  const rows = table[dir] || [['data', 1.2 * G], ['cache', 0.3 * G], ['notes.txt', 4]];
+  const total = rows.reduce((a, [, kb]) => a + kb, 0);
+  const du = [[Math.round(total), '.'], ...rows.map(([n, kb]) => [Math.round(kb), `./${n}`])]
+    .sort((a, b) => b[0] - a[0])
+    .map(([kb, p]) => `${kb}\t${p}`)
+    .join('\n');
+  // Folders: names without a dot (syslog / auth.log are files).
+  const dirs = rows.map(([n]) => n).filter((n) => !n.includes('.') && n !== 'syslog');
+  return `${du}\n@@DIRS\n${dirs.join('\n')}\n`;
+}
+
+// Live log: some history, then a new line every ~1.2 s until the client closes.
+function mockLogStream(stream, cmd) {
+  const iso = (t) => new Date(t).toISOString().replace(/\.\d+Z$/, '+0500');
+  const unit = cmd.match(/journalctl -u '([^']+)'/)?.[1];
+  const docker = cmd.match(/docker logs -f --tail \d+ --timestamps '([^']+)'/)?.[1];
+  const file = cmd.match(/tail -n \d+ -F -- '([^']+)'/)?.[1];
+  const src = unit ? unit.replace('.service', '') : docker || (file ? 'file' : 'system');
+  const sample = [
+    'GET /api/health 200 3ms',
+    'GET /api/users?page=2 200 41ms',
+    'POST /api/login 200 112ms',
+    'WARN slow query: SELECT * FROM orders WHERE status = $1 (812ms)',
+    'GET /static/app.js 304 1ms',
+    'ERROR upstream timed out (110: Connection timed out) while reading response header',
+    'POST /api/orders 201 64ms',
+    'worker: job 4812 done in 2.4s',
+  ];
+  let i = 0;
+  let t = Date.now() - 400 * 1000;
+  const line = () => {
+    const text = sample[i++ % sample.length];
+    t += 1000;
+    if (docker) return `${new Date(t).toISOString()} ${text}\n`;
+    if (file) return `${iso(t)} acme-prod ${src}[812]: ${text}\n`;
+    return `${iso(t)} acme-prod ${src}[812]: ${text}\n`;
+  };
+  let head = '';
+  for (let k = 0; k < 40; k++) head += line();
+  stream.write(head);
+  const timer = setInterval(() => {
+    t = Date.now();
+    try {
+      stream.write(line());
+    } catch {
+      clearInterval(timer);
+    }
+  }, 1200);
+  const stop = () => {
+    clearInterval(timer);
+    try {
+      stream.exit(0);
+      stream.end();
+    } catch {
+      // closed
+    }
+  };
+  stream.on('end', stop);
+  stream.on('close', stop);
+}
+
 new Server({ hostKeys: [hostKey] }, (client, info) => {
   if (Date.now() < refuseUntil) {
     client._sock?.destroy();
@@ -589,11 +690,78 @@ new Server({ hostKeys: [hostKey] }, (client, info) => {
       session.on('sftp', (acc) => serveSftp(acc()));
       session.on('exec', (acc, rej, info) => {
         const stream = acc();
-        const cmd = info.command;
+        // The app runs everything as `sh -c '<script>'`: match on the script itself.
+        const cmd = /^sh -c '.*'$/s.test(info.command) ? info.command.slice(7, -1).replace(/'\\''/g, "'") : info.command;
         if (cmd.includes('while IFS= read -r l')) return runMonitor(stream);
         if (cmd.includes('ls -F')) {
           stream.write('T\n');
           stream.write(`H ${HOME}\n`);
+          stream.exit(0);
+          return stream.end();
+        }
+        // Server administration (src/main/system.js): services, Docker, disk, logs.
+        if (cmd.includes('cat >/dev/null; kill $P')) return mockLogStream(stream, cmd);
+        if (cmd.includes('list-units --type=service')) {
+          stream.write(mockServiceList());
+          stream.exit(0);
+          return stream.end();
+        }
+        const svc = cmd.match(/systemctl (start|stop|restart|enable|disable) -- '([^']+)'/);
+        if (svc) {
+          const it = MOCK_SERVICES[svc[2]];
+          if (it && svc[1] === 'stop') Object.assign(it, { active: 'inactive', sub: 'dead' });
+          if (it && (svc[1] === 'start' || svc[1] === 'restart')) Object.assign(it, { active: 'active', sub: 'running' });
+          stream.exit(it ? 0 : 5);
+          if (!it) stream.write(`Failed to ${svc[1]} ${svc[2]}: Unit ${svc[2]} not found.\n`);
+          return stream.end();
+        }
+        if (cmd.includes('docker ps -a')) {
+          stream.write(MOCK_CONTAINERS.map((c) => JSON.stringify(c)).join('\n') + '\n');
+          stream.exit(0);
+          return stream.end();
+        }
+        if (cmd.includes('docker stats --no-stream')) {
+          stream.write(
+            MOCK_CONTAINERS.filter((c) => c.State === 'running')
+              .map((c, i) => JSON.stringify({ ID: c.ID, Name: c.Names, CPUPerc: `${(3.1 + i * 7.4).toFixed(2)}%`, MemUsage: `${120 + i * 210}MiB / 3.8GiB`, MemPerc: `${(3 + i * 5.2).toFixed(2)}%` }))
+              .join('\n') + '\n',
+          );
+          stream.exit(0);
+          return stream.end();
+        }
+        const dk = cmd.match(/docker (start|stop|restart) '([^']+)'/);
+        if (dk) {
+          const c = MOCK_CONTAINERS.find((x) => x.Names === dk[2] || x.ID.startsWith(dk[2]));
+          if (c) Object.assign(c, dk[1] === 'stop' ? { State: 'exited', Status: 'Exited (0) Less than a second ago' } : { State: 'running', Status: 'Up Less than a second' });
+          stream.write(c ? `${dk[2]}\n` : `Error response from daemon: No such container: ${dk[2]}\n`);
+          stream.exit(c ? 0 : 1);
+          return stream.end();
+        }
+        if (cmd.includes('df -PkT')) {
+          stream.write(
+            'Filesystem     Type  1024-blocks      Used Available Capacity Mounted on\n' +
+              '/dev/sda1      ext4    203056560 195230000   7826560      97% /\n' +
+              'tmpfs          tmpfs     1961204         0   1961204       0% /dev/shm\n' +
+              '/dev/sda15     vfat       106858      6186    100672       6% /boot/efi\n' +
+              '/dev/sdb1      ext4    102687672  30806300  66622016      32% /data\n',
+          );
+          stream.exit(0);
+          return stream.end();
+        }
+        if (cmd.includes('du -x -k -d1')) {
+          const dir = cmd.match(/cd -- '([^']*)'/)?.[1] || '/';
+          stream.write(mockDu(dir));
+          stream.exit(0);
+          return stream.end();
+        }
+        if (cmd.includes('-size +100M')) {
+          const now = Math.floor(Date.now() / 1000);
+          stream.write(
+            `21474836480\t${now - 86400 * 3}\t/var/lib/docker/overlay2/9f2c/merged/data/backup.img\n` +
+              `8589934592\t${now - 86400 * 40}\t/home/demo/backups/full-2026-10-01.tar\n` +
+              `5368709120\t${now - 3600}\t/var/log/journal/5a1b/system@0.journal\n` +
+              `1073741824\t${now - 86400 * 7}\t/var/lib/postgresql/16/main/base/16384/2613\n`,
+          );
           stream.exit(0);
           return stream.end();
         }
@@ -604,13 +772,15 @@ new Server({ hostKeys: [hostKey] }, (client, info) => {
           return stream.end();
         }
         if (cmd.includes('ps -eo pid=')) {
-          // Server holati: the busiest processes
-          stream.write(
-            '  812 root      38.5  2.1  86432 /usr/bin/dockerd -H fd://\n' +
-              ' 1203 postgres   4.0 11.3 466120 postgres: checkpointer\n' +
-              '    1 root       0.0  0.3  12800 /sbin/init\n' +
-              ' 2210 demo      12.2  5.0 205000 node /home/demo/apps/api/server.js\n',
-          );
+          // Server holati: the busiest processes (with elapsed seconds when asked)
+          const rows = [
+            ['812', 'root', '38.5', '2.1', '86432', '1036800', '/usr/bin/dockerd -H fd://'],
+            ['2210', 'demo', '12.2', '5.0', '205000', '86400', 'node /home/demo/apps/api/server.js'],
+            ['1203', 'postgres', '4.0', '11.3', '466120', '1036800', 'postgres: checkpointer'],
+            ['1', 'root', '0.0', '0.3', '12800', '2332800', '/sbin/init'],
+          ];
+          const et = cmd.includes('etimes');
+          stream.write(rows.map((r) => (et ? r : [...r.slice(0, 5), r[6]]).join(' ')).join('\n') + '\n');
           stream.exit(0);
           return stream.end();
         }
@@ -660,7 +830,7 @@ new Server({ hostKeys: [hostKey] }, (client, info) => {
           setTimeout(() => client._sock?.destroy(), 50);
           return;
         }
-        if (MOCK_SH && !cmd.includes('rm -rf') && !cmd.includes('kill-session')) return runReal(stream, cmd);
+        if (MOCK_SH && !cmd.includes('rm -rf') && !cmd.includes('kill-session')) return runReal(stream, info.command);
         // No rm here: the app must fall back to deleting over SFTP.
         stream.exit(cmd.includes('rm -rf') ? 1 : 0);
         stream.end();

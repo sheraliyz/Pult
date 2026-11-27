@@ -20,6 +20,7 @@ const { Connection } = require('./connection');
 const { TransferManager } = require('./transfers');
 const { AgentWatch, stamp } = require('./agents');
 const { Tunnels } = require('./tunnels');
+const system = require('./system');
 const { LocalEdits } = require('./localedit');
 const updater = require('./updater');
 const fsops = require('./fsops');
@@ -575,6 +576,50 @@ handle('sys:kill', async (connId, pid, force = false) => {
   if (!Number.isInteger(p) || p < 2) throw new Error('Noto‘g‘ri jarayon raqami');
   const r = await conn(connId).exec(`kill -${force ? 'KILL' : 'TERM'} ${p}`, 8000);
   if (r.code !== 0) throw new Error(String(r.stderr || '').trim() || 'Jarayonni to‘xtatib bo‘lmadi (ruxsat yo‘qdir)');
+});
+
+/* ---------------- server administration: services, Docker, disk, logs ---------------- */
+
+handle('sys:services', (connId) => system.services(conn(connId)));
+handle('sys:service', (connId, unit, action) => system.serviceAction(conn(connId), unit, action));
+handle('sys:containers', (connId) => system.containers(conn(connId)));
+handle('sys:containerStats', (connId) => system.containerStats(conn(connId)));
+handle('sys:container', (connId, id, action) => system.containerAction(conn(connId), id, action));
+handle('sys:mounts', (connId) => system.mounts(conn(connId)));
+handle('sys:usage', (connId, dir) => system.usage(conn(connId), dir));
+handle('sys:bigFiles', (connId, dir) => system.bigFiles(conn(connId), dir));
+
+// Live logs: one exec channel each; text goes to the window as it arrives.
+const logStreams = new Map(); // id → { close }
+let logSeq = 0;
+handle('logs:open', async (connId, source) => {
+  const cmd = system.logCommand(source);
+  const id = `log${++logSeq}`;
+  let buf = '';
+  let timer = null;
+  const flush = () => {
+    timer = null;
+    if (buf) send('logs:data', id, buf);
+    buf = '';
+  };
+  const handleObj = await conn(connId).stream(cmd, {
+    onData: (text) => {
+      buf += text;
+      if (!timer) timer = setTimeout(flush, 80); // batch bursts
+    },
+    onEnd: (code) => {
+      clearTimeout(timer);
+      flush();
+      logStreams.delete(id);
+      send('logs:end', id, code);
+    },
+  });
+  logStreams.set(id, handleObj);
+  return id;
+});
+handle('logs:close', (id) => {
+  logStreams.get(id)?.close();
+  logStreams.delete(id);
 });
 
 const MAX_EDIT_BYTES = 5 * 1024 * 1024;

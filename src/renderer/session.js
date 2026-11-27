@@ -1,10 +1,13 @@
 // A connected server: terminal tabs + file browser, sharing one SSH link.
 
 import { call } from './api.js';
-import { h, icon, clear, shellQuote, initials } from './dom.js';
+import { h, icon, clear, shellQuote, initials, fmt } from './dom.js';
+
+const fmtBytes = (n) => fmt.bytes(n);
 import { menu, toast, confirmDialog } from './ui.js';
 import { TermView } from './terminal.js';
 import { FilesView } from './files.js';
+import { SystemView } from './system.js';
 import { describeError } from './errors.js';
 import { AGENTS, cleanTitle, agentMenuItems, agentCommand, openUsagePanel, closeUsagePanel, refreshUsagePanel } from './agents.js';
 import { snippetMenuItems } from './snippets.js';
@@ -100,11 +103,14 @@ export class Session {
     // The terminal sits in a black screen with a one-line header.
     this.termHead = h('div', { class: 'term-head' });
     this.termStack = h('div', { class: 'term-stack' });
-    this.termPane = h('div', { class: 'pane pane-term' }, h('div', { class: 'term-screen' }, this.termHead, this.termStack));
+    // Claude asks for permission in another terminal: answer from here.
+    this.waitStack = h('div', { class: 'cl-wait-stack' });
+    this.termPane = h('div', { class: 'pane pane-term' }, h('div', { class: 'term-screen' }, this.termHead, this.termStack, this.waitStack));
     this.filesPane = h('div', { class: 'pane pane-files' });
+    this.sysPane = h('div', { class: 'pane pane-sys' });
     this.splitter = h('div', { class: 'splitter' });
     this.setupSplitter();
-    this.body = h('div', { class: 's-body' }, this.filesPane, this.splitter, this.termPane);
+    this.body = h('div', { class: 's-body' }, this.filesPane, this.splitter, this.termPane, this.sysPane);
 
     this.banner = h('div', { class: 's-banner', hidden: true });
     this.curtain = h('div', { class: 's-curtain' });
@@ -201,14 +207,72 @@ export class Session {
     const pane = v.attach ? this.agents?.panes?.[v.attach] : null;
     const task = cleanTitle(agent ? pane?.title : v.title);
     const meta = [v.attach, v.persistent ? 'tmux' : null].filter(Boolean).join(' · ');
+    const asks = this.claudeAsks(v);
     clear(
       this.termHead,
       h('span', { class: 'th-title' }, `Terminal ${i + 1}`),
       agent && h('span', { class: `th-agent ${this.claudeState(v) ? `th-${this.claudeState(v).state}` : ''}` }, icon(AGENTS[agent].icon, 12), AGENTS[agent].label, this.stateLabel(v)),
-      task && !/^(claude code|agy|antigravity)$/i.test(task) && h('span', { class: 'th-task' }, task),
+      asks && this.answerKeys(v),
+      !asks && task && !/^(claude code|agy|antigravity)$/i.test(task) && h('span', { class: 'th-task' }, task),
       h('span', { class: 'grow' }),
       meta && h('span', { class: 'th-meta mono' }, meta),
     );
+    this.renderWaiting();
+  }
+
+  /** Claude waits for a permission answer in this terminal (and it is not answered yet). */
+  claudeAsks(view) {
+    const cs = this.claudeState(view);
+    if (!cs || cs.state !== 'wait') return null;
+    if (cs.kind !== 'permission_prompt' && !/permission/i.test(cs.message || '')) return null;
+    if (view.answeredAt === cs.t) return null;
+    return cs;
+  }
+
+  /** "Ruxsat berish" = Enter on Claude's highlighted "Yes"; "Rad etish" = Esc ("No"). */
+  answerClaude(view, yes) {
+    const cs = this.claudeState(view);
+    view.write(yes ? '\r' : '\x1b');
+    view.answeredAt = cs?.t ?? Date.now();
+    view.attention = false;
+    this.renderShellTabs();
+    this.updateAttention();
+  }
+
+  answerKeys(view) {
+    return h(
+      'span',
+      { class: 'th-answer' },
+      h('button', { class: 'th-key yes', type: 'button', 'data-tip': 'Claude’ning taklifiga rozilik (Enter)', onclick: () => this.answerClaude(view, true) }, icon('check', 13), 'Ruxsat berish'),
+      h('button', { class: 'th-key no', type: 'button', 'data-tip': 'Rad etish (Esc) — Claude boshqa yo‘l izlaydi', onclick: () => this.answerClaude(view, false) }, icon('x', 13), 'Rad etish'),
+    );
+  }
+
+  /** Cards for the other terminals where Claude waits for permission. */
+  renderWaiting() {
+    const cards = [];
+    for (const [i, v] of this.shells.entries()) {
+      if (v === this.active) continue;
+      const cs = this.claudeAsks(v);
+      if (!cs) continue;
+      const preview = v.lastLines?.(4) || [];
+      cards.push(
+        h(
+          'div',
+          { class: 'cl-wait' },
+          h('div', { class: 'cl-wait-top' }, icon('claude', 13), h('b', null, `Terminal ${i + 1}`), h('span', null, waitText(cs))),
+          preview.length > 0 && h('pre', { class: 'cl-wait-pre' }, preview.join('\n')),
+          h(
+            'div',
+            { class: 'cl-wait-actions' },
+            h('button', { class: 'th-key yes', type: 'button', onclick: () => this.answerClaude(v, true) }, icon('check', 13), 'Ruxsat berish'),
+            h('button', { class: 'th-key no', type: 'button', onclick: () => this.answerClaude(v, false) }, icon('x', 13), 'Rad etish'),
+            h('button', { class: 'th-key', type: 'button', onclick: () => this.select(v) }, 'Ko‘rish'),
+          ),
+        ),
+      );
+    }
+    clear(this.waitStack, cards);
   }
 
   setupSplitter() {
@@ -266,6 +330,7 @@ export class Session {
 
     clearInterval(this.countdown);
     if (s.state === 'reconnecting') this.countdown = setInterval(() => this.renderBanner(), 500);
+    if (s.state !== prev) this.system?.onState(s.state);
 
     this.el.dataset.state = s.state;
     this.renderTitle();
@@ -283,7 +348,8 @@ export class Session {
       await this.addShell(null, false);
     }
     this.select(this.shells[0]);
-    if (this.mode !== 'terminal') this.ensureFiles();
+    if (this.mode === 'files' || this.mode === 'split') this.ensureFiles();
+    if (this.mode === 'system') this.ensureSystem().show();
     if (this.state.persist && !this.state.hasTmux) {
       toast('Serverda tmux topilmadi — aloqa uzilsa terminal sessiyasi qayta boshlanadi', 'info', 5000);
     }
@@ -358,22 +424,74 @@ export class Session {
   setMode(mode) {
     if (this.mode === mode) return;
     this.mode = mode;
-    this.app.saveLayout({ mode });
+    if (mode !== 'system') this.app.saveLayout({ mode }); // "Tizim" is a visit, not a layout
     this.applyMode();
-    if (mode !== 'terminal') this.ensureFiles();
+    if (mode === 'files' || mode === 'split') this.ensureFiles();
+    if (mode === 'system') this.ensureSystem().show();
     requestAnimationFrame(() => {
       this.fitActive();
       if (mode === 'files') this.files?.list.focus();
-      else this.active?.focus();
+      else if (mode !== 'system') this.active?.focus();
     });
+  }
+
+  /** "Tizim": services, Docker, logs, disk (src/renderer/system.js). */
+  ensureSystem() {
+    if (!this.system) {
+      this.system = new SystemView(this);
+      this.sysPane.append(this.system.el);
+    }
+    return this.system;
+  }
+
+  openSystem(tab, opts = {}) {
+    this.app.activate(this.id);
+    if (this.mode !== 'system') this.setMode('system');
+    this.ensureSystem().show(tab, opts);
+  }
+
+  /**
+   * Server alerts (Settings → Server ogohlantirishlari): the disk nearly full,
+   * the memory nearly used up for a minute. A Windows notification at most
+   * every 6 hours per kind; clicking it opens the matching panel.
+   */
+  checkAlerts(st) {
+    if (this.app.settings.serverAlerts === false || !st) return;
+    const now = Date.now();
+    const disk = st.diskTotal ? st.diskUsed / st.diskTotal : null;
+    const mem = st.memTotal ? st.memUsed / st.memTotal : null;
+    this.alertedAt ??= {};
+    const fire = (key, title, body) => {
+      if (now - (this.alertedAt[key] || 0) < 6 * 3600 * 1000) return;
+      this.alertedAt[key] = now;
+      call('notify', { title, body, tag: `${this.id}/@${key}` }).catch(() => {});
+    };
+    if (disk != null && disk >= 0.9) {
+      fire('disk', `${this.server.name}: disk ${Math.round(disk * 100)}% to‘lgan`, `Bo‘sh joy ${fmtBytes(st.diskTotal - st.diskUsed)} qoldi. Bosing — joy nimaga ketganini ko‘rsataman.`);
+    }
+    if (mem != null && mem >= 0.95) {
+      this.memHighSince ??= now;
+      if (now - this.memHighSince > 60 * 1000) fire('mem', `${this.server.name}: RAM ${Math.round(mem * 100)}% band`, 'Bir daqiqadan beri deyarli to‘lgan. Bosing — eng ko‘p xotira olayotgan jarayonlar.');
+    } else {
+      this.memHighSince = null;
+    }
+  }
+
+  /** Show a folder in Fayllar (and select a file in it). */
+  async openFilesAt(dir, select = null) {
+    if (this.mode !== 'files' && this.mode !== 'split') this.setMode('files');
+    this.ensureFiles();
+    await this.files?.go(dir);
+    if (select) this.files?.select(select);
   }
 
   applyMode() {
     this.el.dataset.mode = this.mode;
     this.body.style.setProperty('--split', `${this.split * 100}%`);
-    this.shellTabs.hidden = this.mode === 'files';
-    this.searchBtn.hidden = this.mode === 'files';
-    this.cmdBtn.hidden = this.mode === 'files';
+    const noTerm = this.mode === 'files' || this.mode === 'system';
+    this.shellTabs.hidden = noTerm;
+    this.searchBtn.hidden = noTerm;
+    this.cmdBtn.hidden = noTerm;
     this.renderAiButton();
     if (this.app.activeId === this.id) this.app.renderModes();
   }
@@ -743,6 +861,7 @@ export class Session {
   async close() {
     clearInterval(this.countdown);
     closeUsagePanel(this);
+    this.system?.dispose();
     for (const s of this.shells) {
       this.app.unregisterShell(s);
       s.dispose();

@@ -20,6 +20,7 @@ const MODES = [
   ['terminal', 'terminal', 'Terminal', 'Terminal · Ctrl+Shift+1'],
   ['files', 'folder', 'Fayllar', 'Fayllar · Ctrl+Shift+2'],
   ['split', 'split', 'Yonma-yon', 'Yonma-yon · Ctrl+Shift+3'],
+  ['system', 'server', 'Tizim', 'Tizim: xizmatlar, Docker, loglar, disk · Ctrl+Shift+4'],
 ];
 
 /** "1.5 GB" → ["1.5", "GB"]: the number goes in the dot-matrix face. */
@@ -311,7 +312,7 @@ class App {
       m.rtt != null && chip('Ping', String(m.rtt), 'ms', { cls: m.rtt > 250 ? 'warn' : '', tip: 'Kechikish — bosing: grafiklar va jarayonlar', onclick: open }),
       m.cpu != null && chip('CPU', String(Math.round(m.cpu * 100)), '%', { cls: tone(m.cpu), tip: 'Protsessor — bosing: grafiklar va jarayonlar', onclick: open }),
       ram,
-      disk != null && chip('Disk', String(Math.round(disk * 100)), '%', { cls: `sb-disk ${tone(disk)}`, tip: `/ — ${fmt.bytes(m.diskUsed)} / ${fmt.bytes(m.diskTotal)}` }),
+      disk != null && chip('Disk', String(Math.round(disk * 100)), '%', { cls: `sb-disk ${tone(disk)}`, tip: `/ — ${fmt.bytes(m.diskUsed)} / ${fmt.bytes(m.diskTotal)} · bosing: joy nimaga ketgan`, onclick: () => s.openSystem('disk') }),
       m.uptime && chip('Uptime', upv, upu, { cls: 'sb-uptime sb-gray', tip: 'Server ishlab turgan vaqt' }),
     );
   }
@@ -467,6 +468,7 @@ class App {
       s.stats = stats;
       recordStats(s, stats);
       refreshStatsPanel(s);
+      s.checkAlerts(stats);
       if (connId === this.activeId) this.renderStatus();
     });
     on('shell:data', (shellId, data) => this.shells.get(shellId)?.receive(data));
@@ -532,6 +534,9 @@ class App {
       const s = this.sessions.get(sid);
       if (!s) return;
       this.activate(sid);
+      // Server alerts: the disk panel, or the charts with the busiest processes.
+      if (vid === '@disk') return s.openSystem('disk');
+      if (vid === '@mem') return openStatsPanel(s);
       const v = s.shells.find((x) => x.id === vid);
       if (!v) return;
       if (s.mode === 'files') s.setMode('split');
@@ -576,6 +581,7 @@ class App {
     else if (ctrl && e.shiftKey && e.code === 'Digit1' && s) s.setMode('terminal');
     else if (ctrl && e.shiftKey && e.code === 'Digit2' && s) s.setMode('files');
     else if (ctrl && e.shiftKey && e.code === 'Digit3' && s) s.setMode('split');
+    else if (ctrl && e.shiftKey && e.code === 'Digit4' && s) s.setMode('system');
     else if (ctrl && e.code === 'PageDown' && s) s.cycleShell(1);
     else if (ctrl && e.code === 'PageUp' && s) s.cycleShell(-1);
     else if (ctrl && e.shiftKey && e.code === 'KeyN') this.editServer();

@@ -119,6 +119,7 @@ export async function openSettings(app) {
     s.transferPace === 'fast' ? 'fast' : 'smooth',
     (v) => set({ transferPace: v }),
   );
+  const alerts = toggleRow('Server ogohlantirishlari', 'Disk 90% dan oshsa yoki RAM bir daqiqa davomida deyarli to‘lsa, Windows bildirishnomasi chiqadi (har turidan 6 soatda bir marta).', s.serverAlerts !== false, (v) => set({ serverAlerts: v }));
   const updates = toggleRow('Yangilanishlarni tekshirish', 'GitHub’da Pult’ning yangi versiyasi chiqsa, holat qatorida taklif qilinadi.', s.checkUpdates !== false, (v) => set({ checkUpdates: v }));
   const checkNow = h('button', { class: 'btn btn-sm', type: 'button', onclick: () => app.checkUpdate({ manual: true }) }, icon('refresh', 14), 'Hozir tekshirish');
 
@@ -162,6 +163,12 @@ export async function openSettings(app) {
       row('Yuklab olish', h('div', { class: 'dir-row' }, dirLabel, pickDir)),
       row('Fayl uzatishda', pace.el),
       h('div', { class: 'set-hint' }, 'Ping past: fayl uzatilayotganda terminal va ping sekinlashmaydi, uzatish biroz sekinroq bo‘lishi mumkin. Maksimal tezlik: fayl eng tez uzatiladi, lekin ping va terminal kechikadi.'),
+    ),
+    h(
+      'div',
+      { class: 'set-group' },
+      h('div', { class: 'set-title' }, 'Server'),
+      alerts.el,
     ),
     h(
       'div',

@@ -196,6 +196,17 @@ export class TermView {
     if (this.opened) this.term.focus();
   }
 
+  /** The last non-empty lines on screen (a preview of what the program asks). */
+  lastLines(n = 4) {
+    const b = this.term.buffer.active;
+    const out = [];
+    for (let y = b.baseY + b.cursorY; y >= 0 && out.length < n; y--) {
+      const text = b.getLine(y)?.translateToString(true).trimEnd();
+      if (text && /\S/.test(text) && !/^[─━\-_=\s]+$/.test(text)) out.unshift(text.slice(0, 160));
+    }
+    return out;
+  }
+
   dispose() {
     clearTimeout(this.ackTimer);
     this.term.dispose();
