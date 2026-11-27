@@ -1,6 +1,5 @@
 // What kind of file is this? The kind names the type in the badge's tooltip
-// (the badge itself shows the extension). Same table as the Android app
-// (mobile/lib/ui/file_kinds.dart).
+// (the badge itself shows the extension).
 
 const groups = {
   apk: 'apk aab xapk apks',
