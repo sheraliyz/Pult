@@ -1,6 +1,7 @@
 # Pult
 
-Serverni boshqarish uchun ilova: **terminal + fayllar**, bitta oynada, minimal dizayn.
+Serverni boshqarish uchun ilova: **terminal + fayllar**, bitta oynada. «Qurilma» dizayni: och korpus,
+vazifasiga qarab rangli jismoniy tugmalar, qora terminal ekrani va nuqtali raqamlar.
 Windows va Android. Bepul va ochiq kodli (MIT).
 
 ![Pult](docs/promo/preview.gif)
@@ -10,11 +11,28 @@ Windows va Android. Bepul va ochiq kodli (MIT).
 
 🎬 Promo video: [gorizontal (1920×1080)](docs/promo/pult-promo.mp4) · [vertikal (1080×1920)](docs/promo/pult-promo-vertical.mp4)
 
+## 1.2.0 yangiliklari
+
+- **Yangi dizayn** (kompyuter va telefon): to‘q sariq signal — asosiy amal yoki tanlangan rejim, qora — hozir qayerdasiz,
+  kulrang — yordamchi tugmalar. Sozlamalarda signal rangi (to‘q sariq, sariq, ko‘k, yashil) va korpus rangi tanlanadi.
+- **Fayl uzatishda ping ko‘tarilmaydi.** Pult uzatish paytida pingni kuzatadi va navbat yig‘ilsa sekinlashadi,
+  shuning uchun terminal va ping kechikmaydi. Eng tez uzatish kerak bo‘lsa: Sozlamalar → Fayllar → **Maksimal tezlik**.
+- **Terminalni yopishdan oldin so‘raydi**, agar unda Claude Code, vim yoki boshqa dastur ishlayotgan bo‘lsa.
+- **Oxirgi serverlarga o‘zi ulanadi** — ilova ochilganda, yopilishidan oldin ochiq bo‘lgan serverlar tiklanadi.
+- **Terminal tarixi.** Qayta ochilgan terminalda tmux’dagi avvalgi chiqish ham ko‘rinadi (20 000 qatorgacha).
+- **Claude holati.** Har bir terminal tugmasida Claude ishlayapti, ruxsat so‘rayapti («!») yoki tugadi («✓») — hooklar orqali aniq.
+- **Tez buyruqlar.** `df -h`, `docker ps` kabi buyruqlarni bir bosishda yuborish (kompyuterda `Alt+1…9` ham).
+- **Portlar (SSH tunnel).** Serverda faqat ichkarida ishlayotgan veb-panel yoki API kompyuter yoki telefon
+  brauzerida `http://127.0.0.1:<port>` da ochiladi.
+- **Rasmlar ilova ichida ko‘rinadi**; kompyuterda fayl o‘z dasturida ochiladi va saqlanganda serverga o‘zi qaytadi.
+- **Server holati.** CPU, RAM va ping grafiklari hamda eng ko‘p resurs olayotgan jarayonlar (to‘xtatish mumkin).
+- **Yangilanish.** GitHub’da yangi versiya chiqsa, Pult o‘zi taklif qiladi va o‘rnatadi.
+
 ## O‘rnatish
 
 Tayyor fayllar **Releases** sahifasida:
 
-- `Pult Setup 1.0.0.exe` — Windows o‘rnatuvchisi (Start menyu va ish stolida yorliq paydo bo‘ladi).
+- `Pult Setup <versiya>.exe` — Windows o‘rnatuvchisi (Start menyu va ish stolida yorliq paydo bo‘ladi).
 - `Pult-portable.exe` — o‘rnatmasdan ishlaydi.
 - `Pult.apk` — Android 7.0 va undan yangi telefonlar uchun.
 
