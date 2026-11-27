@@ -4814,3 +4814,271 @@ button.sb-chip:active {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ==========================================================================
+   Tizim → Xavfsizlik, Yangilanishlar (security check, apt jobs)
+   ========================================================================== */
+
+.key-danger {
+  background: var(--err);
+  color: #fff;
+}
+.key-danger:hover {
+  background: var(--err);
+  filter: brightness(1.08);
+}
+.sec-os {
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 700;
+}
+.sec-warn {
+  color: var(--warn);
+  font-weight: 700;
+}
+.sy-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+}
+.sec-list {
+  flex: 1;
+  min-height: 0;
+  padding: 10px 14px 14px;
+}
+.sec-card {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 12px 14px;
+  border: 1.5px solid var(--line-2);
+  border-radius: 13px;
+  background: var(--key);
+}
+.sec-card.bad {
+  border-color: var(--err);
+  background: color-mix(in srgb, var(--err) 7%, var(--key));
+}
+.sec-card.warn {
+  border-color: color-mix(in srgb, var(--warn) 70%, transparent);
+}
+.sec-ic {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1.5px solid var(--stroke);
+  border-radius: 50%;
+  background: var(--key-2);
+  color: var(--ink);
+  flex: none;
+}
+.sec-ic.bad {
+  background: var(--err);
+  color: #fff;
+}
+.sec-ic.warn {
+  background: var(--warn);
+  color: #fff;
+}
+.sec-ic.ok {
+  background: var(--ok);
+  color: #fff;
+}
+.sec-main {
+  flex: 1;
+  min-width: 0;
+}
+.sec-title {
+  font-size: 14.5px;
+  font-weight: 700;
+}
+.sec-text {
+  margin-top: 3px;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.sec-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.sec-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 6px 24px;
+  margin-top: 10px;
+}
+.sec-sub {
+  margin-bottom: 4px;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.sec-kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+  border-bottom: 1px dashed var(--line);
+  font-size: 13px;
+}
+.sec-kv b {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.sec-logins {
+  margin-top: 10px;
+  max-width: 620px;
+}
+.sec-logins .sec-kv span:first-child {
+  min-width: 140px;
+}
+.sec-ports {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.sec-port {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1.5px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--input);
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+.sec-port b {
+  color: var(--ink);
+  font-size: 13.5px;
+}
+.sec-port.bad {
+  border-color: var(--err);
+  background: var(--err);
+  color: #fff;
+}
+.sec-port.bad b {
+  color: #fff;
+}
+
+.jc {
+  margin: 10px 14px 0;
+}
+.jc-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 4px;
+}
+.jc-title {
+  font-size: 13.5px;
+  font-weight: 700;
+}
+.jc-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.jc-wrap {
+  height: 230px;
+  margin: 8px 0 0;
+}
+.jc-screen {
+  font-size: 12.5px;
+}
+
+.up-body {
+  flex: 1;
+  min-height: 0;
+  padding-bottom: 14px;
+}
+.up-top {
+  padding: 12px 14px 0;
+}
+.up-reboot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1.5px solid var(--warn);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--warn) 10%, var(--key));
+  font-size: 13.5px;
+}
+.up-reboot > .ic {
+  color: var(--warn);
+}
+.up-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.up-count {
+  font-size: 15px;
+  font-weight: 600;
+}
+.up-count b {
+  font-size: 17px;
+}
+.up-sec {
+  color: var(--err);
+  font-weight: 700;
+}
+.up-fresh {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 2px;
+  font-size: 15px;
+}
+.up-fresh > .ic {
+  color: var(--ok);
+}
+.up-list {
+  padding: 8px 8px 0;
+}
+.up-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 4px 8px;
+  border-radius: 10px;
+}
+.up-row:hover {
+  background: var(--hover);
+}
+.up-name {
+  width: 220px;
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: none;
+}
+.up-ver {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.up-from {
+  color: var(--ink-3);
+}
