@@ -12,7 +12,6 @@ const path = require('path');
 const posix = path.posix;
 
 const CHUNK = 32 * 1024;
-const IN_FLIGHT = 64;
 const MAX_ACTIVE_JOBS = 2;
 const EMIT_EVERY_MS = 150;
 
@@ -30,9 +29,83 @@ const S_IFMT = 0o170000;
 const isDir = (attrs) => (attrs.mode & S_IFMT) === 0o040000;
 const isLink = (attrs) => (attrs.mode & S_IFMT) === 0o120000;
 
-// Move bytes [start, size) through `chunk(off, len)` with bounded concurrency.
-// `progress(confirmed)` reports the end of the contiguous completed prefix.
-function pipeline(start, size, chunk, progress, cancelled) {
+/**
+ * How many chunks may be in flight on one SSH connection. Terminals, the ping
+ * and every other channel share the link with the transfer, and every byte
+ * queued ahead of a keystroke delays it. So the pacer watches the real ping
+ * (sent every 250 ms while files move): when it rises TARGET_MS above the
+ * quiet ping (the lowest of the last minutes, see Connection.quietPing),
+ * fewer chunks go out; when it stays low, more do, up to
+ * MAX_WINDOW, which still fills a long fat link. Without ping replies a
+ * moderate fixed window is used.
+ */
+const TARGET_MS = 60;
+const MIN_WINDOW = 2;
+const MAX_WINDOW = 64;
+const FALLBACK_WINDOW = 16;
+
+class Pacer {
+  constructor(owner) {
+    this.owner = owner; // TransferManager: its `fast` switch turns pacing off
+    this.window = 8;
+    this.inflight = 0;
+    this.lastPing = 0;
+    this.lastCut = 0;
+    this.waiters = new Set();
+  }
+
+  limit() {
+    if (this.owner?.fast) return MAX_WINDOW;
+    return Date.now() - this.lastPing > 3000 ? FALLBACK_WINDOW : Math.floor(this.window);
+  }
+
+  canSend() {
+    return this.inflight < this.limit();
+  }
+
+  start() {
+    this.inflight += 1;
+  }
+
+  finish() {
+    this.inflight = Math.max(0, this.inflight - 1);
+    this.wake();
+  }
+
+  /** Let pipelines that wait for a slot continue. */
+  wake() {
+    for (const run of [...this.waiters]) {
+      if (!this.canSend()) break;
+      this.waiters.delete(run);
+      run();
+    }
+  }
+
+  /** One ping round trip (ms) on this connection; `quiet`: its ping with nothing queued. */
+  onPing(rtt, quiet) {
+    const now = Date.now();
+    this.lastPing = now;
+    const delay = rtt - Math.min(quiet, rtt);
+    if (delay > TARGET_MS) {
+      // A queue is building: back off (harder the longer it is), then let it drain.
+      if (now - this.lastCut > 400) {
+        this.window *= delay > 3 * TARGET_MS ? 0.6 : 0.8;
+        this.lastCut = now;
+      }
+    } else if (delay < TARGET_MS / 2) {
+      this.window += Math.max(1, this.window * 0.15);
+    } else {
+      this.window += 0.5;
+    }
+    this.window = Math.max(MIN_WINDOW, Math.min(MAX_WINDOW, this.window));
+    this.wake();
+  }
+}
+
+// Move bytes [start, size) through `chunk(off, len)`, as many at once as the
+// connection's pacer allows. `progress(confirmed)` reports the end of the
+// contiguous completed prefix.
+function pipeline(start, size, chunk, progress, cancelled, pacer) {
   return new Promise((resolve, reject) => {
     let pos = start;
     let active = 0;
@@ -41,31 +114,40 @@ function pipeline(start, size, chunk, progress, cancelled) {
     const finish = (err) => {
       if (done) return;
       done = true;
+      pacer.waiters.delete(launch);
       err ? reject(err) : resolve();
     };
-    const launch = () => {
+    function launch() {
       if (done) return;
       if (cancelled()) return finish(new Cancelled());
-      while (active < IN_FLIGHT && pos < size) {
+      while (pos < size && pacer.canSend()) {
         const off = pos;
         const len = Math.min(CHUNK, size - off);
         pos += len;
         active += 1;
         pending.add(off);
+        pacer.start();
         chunk(off, len).then(
           () => {
             active -= 1;
             pending.delete(off);
+            pacer.finish();
             if (done) return;
             progress(pending.size ? Math.min(...pending) : pos);
             if (pos >= size && active === 0) finish();
             else launch();
           },
-          (err) => finish(err),
+          (err) => {
+            active -= 1;
+            pacer.finish();
+            finish(err);
+          },
         );
       }
-      if (pos >= size && active === 0) finish();
-    };
+      if (pos >= size && active === 0) return finish();
+      // Out of slots: the next chunk to finish (on any transfer) wakes us.
+      if (pos < size) pacer.waiters.add(launch);
+    }
     launch();
   });
 }
@@ -76,6 +158,30 @@ class TransferManager extends EventEmitter {
     this.getConnection = getConnection;
     this.jobs = new Map();
     this.seq = 0;
+    this.pacers = new Map(); // connId → Pacer, shared by every transfer on that link
+    this.fast = false; // settings: "Maksimal tezlik" — no pacing, the old 64 chunks
+  }
+
+  setFast(on) {
+    this.fast = !!on;
+    for (const p of this.pacers.values()) p.wake();
+  }
+
+  pacer(job) {
+    let p = this.pacers.get(job.connId);
+    if (!p) {
+      p = new Pacer(this);
+      this.pacers.set(job.connId, p);
+      const conn = this.getConnection(job.connId);
+      conn?.on('pong', (rtt) => p.onPing(rtt, conn.quietPing ? conn.quietPing() : rtt));
+    }
+    return p;
+  }
+
+  /** Fast pings feed the pacer only while this connection has files moving. */
+  updateFastPing(connId) {
+    const busy = [...this.jobs.values()].some((j) => j.connId === connId && (j.planning || ['queued', 'running', 'waiting'].includes(j.state)));
+    this.getConnection(connId)?.setFastPing?.(busy);
   }
 
   list() {
@@ -194,6 +300,8 @@ class TransferManager extends EventEmitter {
     try {
       const conn = this.getConnection(job.connId);
       if (!conn) throw new Error('Ulanish yopilgan');
+      this.pacer(job);
+      this.updateFastPing(job.connId);
       job.state = 'running';
       this.emitJob(job, true);
       if (job.kind === 'upload') await this.planUpload(job, conn);
@@ -224,6 +332,7 @@ class TransferManager extends EventEmitter {
       this.emitJob(job, true);
     } finally {
       job.planning = false;
+      this.updateFastPing(job.connId);
       this.pump();
     }
   }
@@ -357,6 +466,7 @@ class TransferManager extends EventEmitter {
           },
           (confirmed) => this.progress(job, file, confirmed),
           () => job.cancelled,
+          this.pacer(job),
         ),
       );
     } finally {
@@ -386,6 +496,7 @@ class TransferManager extends EventEmitter {
           },
           (confirmed) => this.progress(job, file, confirmed),
           () => job.cancelled,
+          this.pacer(job),
         ),
       );
     } finally {
@@ -416,4 +527,4 @@ async function uniqueLocal(target) {
   }
 }
 
-module.exports = { TransferManager };
+module.exports = { TransferManager, Pacer };

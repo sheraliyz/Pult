@@ -7,7 +7,8 @@
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'"
     />
     <title>Pult</title>
-    <link rel="stylesheet" href="../../node_modules/@fontsource-variable/inter/index.css" />
+    <link rel="stylesheet" href="../../node_modules/@fontsource-variable/geist/index.css" />
+    <link rel="stylesheet" href="../../node_modules/@fontsource/doto/900.css" />
     <link rel="stylesheet" href="../../node_modules/@fontsource/jetbrains-mono/400.css" />
     <link rel="stylesheet" href="../../node_modules/@fontsource/jetbrains-mono/700.css" />
     <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css" />
@@ -15,9 +16,11 @@
   </head>
   <body>
     <div id="app">
-      <header id="titlebar"></header>
-      <main id="views"></main>
-      <footer id="statusbar"></footer>
+      <aside id="rail"></aside>
+      <div id="main">
+        <main id="views"></main>
+        <footer id="statusbar"></footer>
+      </div>
     </div>
     <div id="layer"></div>
     <script type="module" src="app.js"></script>

@@ -61,7 +61,7 @@ export class Transfers {
         this.chip,
         icon(active.length ? (waiting ? 'refresh' : 'arrowUp') : failed ? 'alert' : 'check', 13),
         active.length
-          ? h('span', null, `${active.length} · ${total ? Math.floor((done / total) * 100) : 0}%`)
+          ? [h('span', null, `${active.length} ta`), h('span', { class: 'sb-num' }, `${total ? Math.floor((done / total) * 100) : 0}%`)]
           : h('span', null, failed ? 'Xato' : 'Tayyor'),
       );
       this.chip.className = `sb-xfer ${active.length ? 'busy' : failed ? 'failed' : 'done'}`;

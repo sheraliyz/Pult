@@ -1,12 +1,34 @@
 // A connected server: terminal tabs + file browser, sharing one SSH link.
 
 import { call } from './api.js';
-import { h, icon, clear, shellQuote } from './dom.js';
-import { menu, toast } from './ui.js';
+import { h, icon, clear, shellQuote, initials } from './dom.js';
+import { menu, toast, confirmDialog } from './ui.js';
 import { TermView } from './terminal.js';
 import { FilesView } from './files.js';
 import { describeError } from './errors.js';
 import { AGENTS, cleanTitle, agentMenuItems, agentCommand, openUsagePanel, closeUsagePanel, refreshUsagePanel } from './agents.js';
+import { snippetMenuItems } from './snippets.js';
+
+const STATE_LABEL = {
+  connecting: 'Ulanmoqda…',
+  ready: 'Ulangan',
+  reconnecting: 'Qayta ulanmoqda…',
+  failed: 'Ulanmadi',
+  closed: 'Yopilgan',
+};
+
+// A terminal whose foreground program is one of these is just a prompt.
+const SHELLS = new Set(['bash', 'zsh', 'sh', 'fish', 'dash', 'ksh', 'mksh', 'tcsh', 'csh', 'ash', 'login', 'tmux']);
+
+/** Claude's Notification message in Uzbek: "Bash uchun ruxsat so‘rayapti", "javobingizni kutyapti". */
+function waitText(ev) {
+  const m = String(ev?.message || '');
+  const tool = m.match(/permission to use (.+?)\.?$/i);
+  if (tool) return `${tool[1]} uchun ruxsat so‘rayapti`;
+  if (/permission/i.test(m) || ev?.kind === 'permission_prompt') return 'ruxsat so‘rayapti';
+  if (/waiting for your input|idle/i.test(m) || ev?.kind === 'idle_prompt') return 'javobingizni kutyapti';
+  return m ? m.slice(0, 120) : 'sizni kutyapti';
+}
 
 let seq = 0;
 const uid = (p) => `${p}${Date.now().toString(36)}${(++seq).toString(36)}`;
@@ -33,37 +55,52 @@ export class Session {
   /* ---------------- DOM ---------------- */
 
   build() {
-    const modeBtn = (mode, ic, label, tip) =>
-      h('button', { class: 'seg-btn', type: 'button', dataset: { mode }, 'data-tip': tip, onclick: () => this.setMode(mode) }, icon(ic, 15), label);
-    this.modeSeg = h(
-      'div',
-      { class: 'mode-seg' },
-      modeBtn('terminal', 'terminal', 'Terminal', 'Ctrl+Shift+1'),
-      modeBtn('files', 'folder', 'Fayllar', 'Ctrl+Shift+2'),
-      modeBtn('split', 'split', null, 'Yonma-yon · Ctrl+Shift+3'),
-    );
-    this.shellTabs = h('div', { class: 'shell-tabs' });
+    // Top bar: which server, its state, the terminals and the actions. The
+    // mode keys (terminal / files / split) live in the app's left rail.
+    this.nameEl = h('div', { class: 's-name' });
+    this.statusEl = h('div', { class: 's-status' });
+    this.shellTabs = h('div', { class: 'shell-tabs', role: 'tablist', 'aria-label': 'Terminallar' });
     this.aiBtn = h(
       'button',
-      { class: 'shell-ai', type: 'button', hidden: true, 'data-tip': 'AI agent: Claude Code, agy · Ctrl+Shift+A', onclick: () => this.openAgentMenu() },
-      icon('spark', 15),
-      h('span', null, 'AI'),
+      { class: 'key key-ink shell-ai', type: 'button', hidden: true, 'data-tip': 'AI agent: Claude Code, agy · Ctrl+Shift+A', onclick: () => this.openAgentMenu() },
+      icon('spark', 17),
+      h('span', null, 'AI agent'),
       icon('chevronDown', 12),
+    );
+    this.cmdBtn = h(
+      'button',
+      { class: 'key key-gray shell-cmd', type: 'button', 'data-tip': 'Tez buyruqlar · Alt+1…9', onclick: () => this.openSnippets() },
+      icon('bolt', 17),
+      h('span', { class: 'key-label' }, 'Buyruqlar'),
+      icon('chevronDown', 12),
+    );
+    this.searchBtn = h(
+      'button',
+      { class: 'key key-gray key-icon', type: 'button', 'data-tip': 'Terminalda qidirish · Ctrl+Shift+F', 'aria-label': 'Terminalda qidirish', onclick: () => this.active?.openSearch() },
+      icon('search', 18),
     );
     this.toolbar = h(
       'div',
       { class: 's-toolbar' },
-      this.modeSeg,
+      h('div', { class: 's-title' }, this.nameEl, this.statusEl),
       h('div', { class: 'tb-divider' }),
       this.shellTabs,
       this.aiBtn,
+      this.cmdBtn,
       h('div', { class: 'grow' }),
-      h('button', { class: 'icon-btn', type: 'button', 'data-tip': 'Terminalda qidirish · Ctrl+Shift+F', onclick: () => this.active?.openSearch() }, icon('search', 16)),
-      h('button', { class: 'icon-btn', type: 'button', 'data-tip': 'Server sozlamalari', onclick: () => this.app.editServer(this.server) }, icon('sliders', 16)),
-      h('button', { class: 'icon-btn', type: 'button', 'data-tip': 'Ulanishni yopish', onclick: () => this.app.closeSession(this) }, icon('power', 16)),
+      h(
+        'div',
+        { class: 's-actions' },
+        this.searchBtn,
+        h('button', { class: 'key key-gray key-icon', type: 'button', 'data-tip': 'Server sozlamalari', 'aria-label': 'Server sozlamalari', onclick: () => this.app.editServer(this.server) }, icon('sliders', 18)),
+        h('button', { class: 'key key-ink key-icon', type: 'button', 'data-tip': 'Ulanishni yopish', 'aria-label': 'Ulanishni yopish', onclick: () => this.app.closeSession(this) }, icon('power', 18)),
+      ),
     );
 
-    this.termPane = h('div', { class: 'pane pane-term' });
+    // The terminal sits in a black screen with a one-line header.
+    this.termHead = h('div', { class: 'term-head' });
+    this.termStack = h('div', { class: 'term-stack' });
+    this.termPane = h('div', { class: 'pane pane-term' }, h('div', { class: 'term-screen' }, this.termHead, this.termStack));
     this.filesPane = h('div', { class: 'pane pane-files' });
     this.splitter = h('div', { class: 'splitter' });
     this.setupSplitter();
@@ -74,23 +111,34 @@ export class Session {
 
     this.el = h('section', { class: 'view session' }, this.toolbar, this.body, this.banner, this.curtain);
 
+    // Entry in the left rail.
+    this.tabSub = h('span', { class: 'tab-sub mono' });
+    this.tabCode = h('span', { class: 'tab-code', 'aria-hidden': 'true' });
     this.tab = h(
       'div',
       { class: 'tab', role: 'tab', tabindex: '0', onclick: () => this.app.activate(this.id) },
       h('span', { class: 'tab-dot' }),
-      h('span', { class: 'tab-label' }, this.server.name),
+      h('span', { class: 'tab-text' }, h('span', { class: 'tab-label' }, this.server.name), this.tabSub),
+      this.tabCode,
       h('button', {
         class: 'tab-close',
         type: 'button',
-        'aria-label': 'Yopish',
+        'aria-label': 'Ulanishni yopish',
+        'data-tip': 'Ulanishni yopish',
         onclick: (e) => {
           e.stopPropagation();
           this.app.closeSession(this);
         },
-      }, icon('x', 13)),
+      }, icon('x', 12)),
     );
     this.tab.addEventListener('auxclick', (e) => {
       if (e.button === 1) this.app.closeSession(this);
+    });
+    this.tab.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        this.app.activate(this.id);
+      }
     });
 
     // Every shell tracks the pane size, visible or not, so switching is instant.
@@ -102,10 +150,65 @@ export class Session {
         pending = false;
         if (!this.body.classList.contains('resizing')) for (const s of this.shells) s.fitNow();
       });
-    }).observe(this.termPane);
+    }).observe(this.termStack);
 
     this.applyMode();
+    this.renderTitle();
     this.renderCurtain();
+  }
+
+  /** Server name, connection state and address in the top bar and the rail. */
+  renderTitle() {
+    const s = this.state;
+    const { username, host, port } = this.server;
+    const addr = `${username}@${host}${port && port !== 22 ? `:${port}` : ''}`;
+    const label = STATE_LABEL[s.state] || s.state;
+    this.nameEl.textContent = this.server.name;
+    this.tabCode.textContent = initials(this.server.name);
+    let tmux = null;
+    if (s.state === 'ready') {
+      if (this.active?.persistent) tmux = h('span', { 'data-tip': 'tmux: aloqa uzilsa ham sessiya saqlanadi' }, 'tmux saqlanadi');
+      else if (s.persist && !s.hasTmux) tmux = h('span', { class: 'warn-text', 'data-tip': 'Serverda tmux yo‘q — aloqa uzilsa sessiya qayta boshlanadi' }, 'tmux yo‘q');
+    }
+    clear(
+      this.statusEl,
+      h('span', { class: `s-dot state-${s.state}` }),
+      h('span', null, label),
+      h('span', { class: 's-sep' }, '·'),
+      h('span', { class: 'mono' }, addr),
+      tmux && [h('span', { class: 's-sep' }, '·'), tmux],
+    );
+    this.tabSub.textContent = s.state === 'ready' || s.state === 'connecting' ? addr : label.toLowerCase();
+    this.tab.dataset.tip = `${this.server.name} · ${addr} · ${label}`;
+  }
+
+  stateLabel(view) {
+    const cs = this.claudeState(view);
+    if (!cs) return null;
+    const text = cs.state === 'wait' ? waitText(cs) : cs.state === 'done' ? 'tugadi' : 'ishlayapti';
+    return h('span', { class: 'th-state' }, ` · ${text}`);
+  }
+
+  /** "Terminal 2 · Claude Code · <task>" above the terminal screen. */
+  renderTermHead() {
+    const v = this.active;
+    if (!v) {
+      clear(this.termHead);
+      return;
+    }
+    const i = this.shells.indexOf(v);
+    const agent = this.agentOf(v);
+    const pane = v.attach ? this.agents?.panes?.[v.attach] : null;
+    const task = cleanTitle(agent ? pane?.title : v.title);
+    const meta = [v.attach, v.persistent ? 'tmux' : null].filter(Boolean).join(' · ');
+    clear(
+      this.termHead,
+      h('span', { class: 'th-title' }, `Terminal ${i + 1}`),
+      agent && h('span', { class: `th-agent ${this.claudeState(v) ? `th-${this.claudeState(v).state}` : ''}` }, icon(AGENTS[agent].icon, 12), AGENTS[agent].label, this.stateLabel(v)),
+      task && !/^(claude code|agy|antigravity)$/i.test(task) && h('span', { class: 'th-task' }, task),
+      h('span', { class: 'grow' }),
+      meta && h('span', { class: 'th-meta mono' }, meta),
+    );
   }
 
   setupSplitter() {
@@ -165,6 +268,7 @@ export class Session {
     if (s.state === 'reconnecting') this.countdown = setInterval(() => this.renderBanner(), 500);
 
     this.el.dataset.state = s.state;
+    this.renderTitle();
     this.renderBanner();
     this.renderCurtain();
     this.app.renderStatus();
@@ -267,9 +371,11 @@ export class Session {
   applyMode() {
     this.el.dataset.mode = this.mode;
     this.body.style.setProperty('--split', `${this.split * 100}%`);
-    for (const b of this.modeSeg.children) b.classList.toggle('on', b.dataset.mode === this.mode);
     this.shellTabs.hidden = this.mode === 'files';
+    this.searchBtn.hidden = this.mode === 'files';
+    this.cmdBtn.hidden = this.mode === 'files';
     this.renderAiButton();
+    if (this.app.activeId === this.id) this.app.renderModes();
   }
 
   ensureFiles() {
@@ -290,7 +396,7 @@ export class Session {
     const view = new TermView(this, uid('s'), this.app.settings);
     this.shells.push(view);
     this.app.registerShell(view);
-    this.termPane.append(view.host);
+    this.termStack.append(view.host);
     this.renderShellTabs();
     // xterm needs a measurable element to compute rows/cols.
     const wasActive = this.active;
@@ -320,19 +426,38 @@ export class Session {
     if (this.app.activeId === this.id) view.attention = false;
     this.showOnly(view);
     this.renderShellTabs();
+    this.renderTitle();
     this.updateAttention();
     if (this.mode !== 'files') requestAnimationFrame(() => view.focus());
     if (this.app.activeId === this.id) this.app.renderStatus();
   }
 
-  async closeShell(view) {
+  async closeShell(view, { confirm = true } = {}) {
     if (!view) return;
+    if (confirm && !(await this.confirmCloseShell(view))) return;
+    if (!this.shells.includes(view)) return;
     this.removeShell(view);
     await call('shell:close', this.id, view.id, { kill: true }).catch(() => {});
     if (!this.shells.length && this.state.state === 'ready') {
       if (this.mode === 'files') return;
       await this.addShell();
     }
+  }
+
+  /** Closing kills the tmux session: ask first if a program (Claude Code, vim, a build…) runs in it. */
+  async confirmCloseShell(view) {
+    if (view.exited || !view.persistent || !view.attach) return true;
+    const pane = this.agents?.panes?.[view.attach];
+    const cmd = String(pane?.command || '').replace(/^-/, '').trim();
+    if (!cmd || SHELLS.has(cmd)) return true;
+    const what = pane.agent ? AGENTS[pane.agent].label : cmd;
+    const n = this.shells.indexOf(view) + 1;
+    return confirmDialog({
+      title: `Terminal ${n} yopilsinmi?`,
+      message: `Unda hozir ${what} ishlayapti. Terminal yopilsa, u to‘xtaydi va serverdagi sessiya ham o‘chadi.`,
+      confirm: 'Yopish',
+      danger: true,
+    });
   }
 
   removeShell(view) {
@@ -366,8 +491,9 @@ export class Session {
           'data-tip': this.shellTip(s, i),
           onclick: () => this.select(s),
         },
-        agent && h('span', { class: 'pill-agent' }, icon(AGENTS[agent].icon, 12)),
+        agent && h('span', { class: 'pill-agent' }, icon(AGENTS[agent].icon, 13)),
         h('span', { class: 'pill-num' }, String(i + 1)),
+        this.pillState(s),
         h('button', {
           class: 'pill-close',
           type: 'button',
@@ -376,7 +502,7 @@ export class Session {
             e.stopPropagation();
             this.closeShell(s);
           },
-        }, icon('x', 11)),
+        }, icon('x', 10)),
       );
       pill.addEventListener('auxclick', (e) => {
         if (e.button === 1) this.closeShell(s);
@@ -396,8 +522,36 @@ export class Session {
       this.shellTabs.append(pill);
     });
     this.shellTabs.append(
-      h('button', { class: 'shell-add', type: 'button', 'data-tip': 'Yangi terminal · Ctrl+Shift+T', onclick: () => this.addShell() }, icon('plus', 14)),
+      h('button', { class: 'key key-gray key-icon shell-add', type: 'button', 'data-tip': 'Yangi terminal · Ctrl+Shift+T', 'aria-label': 'Yangi terminal', onclick: () => this.addShell() }, icon('plus', 17)),
     );
+    this.renderTermHead();
+  }
+
+  /* ---------------- quick commands ---------------- */
+
+  openSnippets() {
+    const r = this.cmdBtn.getBoundingClientRect();
+    menu(r.left, r.bottom + 6, snippetMenuItems(this));
+  }
+
+  runSnippet(sn) {
+    if (this.state.state !== 'ready' || !this.active) {
+      toast('Server bilan aloqa yo‘q', 'err');
+      return;
+    }
+    if (this.mode === 'files') this.setMode('split');
+    const view = this.active;
+    view.write(`${sn.cmd}${sn.run !== false ? '\r' : ''}`);
+    requestAnimationFrame(() => view.focus());
+  }
+
+  /** Small mark on a terminal key: Claude is working (spinner), waits for you (!), or is done (✓). */
+  pillState(view) {
+    const cs = this.claudeState(view);
+    if (!cs) return null;
+    if (cs.state === 'work') return h('span', { class: 'pill-state ps-work', 'aria-label': 'ishlayapti' });
+    if (cs.state === 'wait') return h('span', { class: 'pill-state ps-wait', 'aria-label': 'sizni kutyapti' }, '!');
+    return h('span', { class: 'pill-state ps-done', 'aria-label': 'tugadi' }, icon('check', 10));
   }
 
   cdInTerminal(path) {
@@ -412,8 +566,12 @@ export class Session {
 
   onAgents(st) {
     const before = JSON.stringify(this.agents?.panes || {});
+    const prevEvents = this.agents?.claude?.events || {};
+    const beforeEvents = JSON.stringify(prevEvents);
     this.agents = st;
-    if (JSON.stringify(st.panes || {}) !== before) this.renderShellTabs();
+    const events = st.claude?.events || {};
+    if (JSON.stringify(st.panes || {}) !== before || JSON.stringify(events) !== beforeEvents) this.renderShellTabs();
+    this.checkClaudeEvents(prevEvents, events);
     this.renderAiButton();
     refreshUsagePanel(this);
     if (this.app.activeId === this.id) this.app.renderStatus();
@@ -422,6 +580,17 @@ export class Session {
   hasAgents() {
     const st = this.agents;
     return !!(st && (st.claude?.path || st.agy?.path || Object.values(st.panes || {}).some((p) => p.agent)));
+  }
+
+  /**
+   * What Claude Code is doing in this terminal, from its hooks:
+   * { state: 'work' | 'wait' | 'done', message, t } or null.
+   */
+  claudeState(view) {
+    const ev = view?.attach ? this.agents?.claude?.events?.[view.attach] : null;
+    if (!ev || ev.e === 'end' || this.agentOf(view) !== 'claude') return null;
+    const state = ev.e === 'wait' ? 'wait' : ev.e === 'done' ? 'done' : 'work';
+    return { state, message: ev.message, kind: ev.kind, t: ev.t };
   }
 
   /** 'claude' | 'agy' | null — what runs in this terminal right now. */
@@ -436,6 +605,8 @@ export class Session {
     const parts = [AGENTS[agent].label];
     const title = cleanTitle(pane.title);
     if (title && !/^(claude code|agy|antigravity)/i.test(title)) parts.push(title);
+    const cs = agent === 'claude' ? this.claudeState(view) : null;
+    if (cs) parts.push(cs.state === 'wait' ? waitText(cs) : cs.state === 'done' ? 'tugadi' : 'ishlayapti');
     const snap = agent === 'claude' ? this.agents?.claude?.sessions?.[view.attach] : null;
     if (snap?.ctx != null) parts.push(`kontekst ${Math.round(snap.ctx)}%`);
     return parts.join(' · ');
@@ -474,8 +645,43 @@ export class Session {
     requestAnimationFrame(() => view.focus());
   }
 
+  /** Claude finished or waits for you in some terminal: mark it and notify (precise text from the hooks). */
+  checkClaudeEvents(prev, next) {
+    const primed = this.eventsPrimed;
+    this.eventsPrimed = true;
+    if (!primed) return; // the first scan only shows old news
+    for (const [session, ev] of Object.entries(next)) {
+      const old = prev[session];
+      if (old && old.t === ev.t && old.e === ev.e) continue;
+      if (ev.e !== 'wait' && ev.e !== 'done') continue;
+      const view = this.shells.find((v) => v.attach === session);
+      if (view) this.alertAgent(view, ev);
+    }
+  }
+
+  alertAgent(view, ev) {
+    const looking = this.app.activeId === this.id && this.active === view && this.mode !== 'files' && document.hasFocus() && !document.hidden;
+    if (looking) return;
+    if (!view.attention) {
+      view.attention = true;
+      this.renderShellTabs();
+      this.updateAttention();
+    }
+    if (!this.app.settings.agentNotify) return;
+    const now = Date.now();
+    if (now - (view.notifiedAt || 0) < 4000) return;
+    view.notifiedAt = now;
+    const n = this.shells.indexOf(view) + 1;
+    const task = cleanTitle(this.agents?.panes?.[view.attach]?.title);
+    const named = task && !/^(claude code|claude)$/i.test(task) ? `${task}: ` : '';
+    const body = ev.e === 'wait' ? `${named}${waitText(ev)}` : `${named}ish tugadi`;
+    call('notify', { title: `${this.server.name} · Claude Code · terminal ${n}`, body, tag: `${this.id}/${view.id}` }).catch(() => {});
+  }
+
   /** A terminal rang its bell (Claude finished, asks for permission…). */
   onBell(view) {
+    // With hooks on, Claude's own events say exactly what happened (see alertAgent).
+    if (this.agents?.claude?.hooks && this.agentOf(view) === 'claude') return;
     const looking = this.app.activeId === this.id && this.active === view && this.mode !== 'files' && document.hasFocus() && !document.hidden;
     if (looking) return;
     if (!view.attention) {

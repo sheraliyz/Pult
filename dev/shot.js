@@ -71,7 +71,7 @@ const SCENARIOS = {
     { type: 'df -h\r' },
     { wait: 3500 },
     { shot: 'terminal' },
-    { js: 'window.__pult.activeSession().addShell()' },
+    { js: 'window.__pult.activeSession().addShell().then(() => 0)' },
     { wait: 1200 },
     { js: 'window.__pult.activeSession().select(window.__pult.activeSession().shells[0])' },
     { wait: 300 },
@@ -117,6 +117,72 @@ const SCENARIOS = {
     { js: 'window.__pult.activeSession().setMode("split")' },
     { wait: 1000 },
     { shot: 'files-kinds-split' },
+  ],
+  // The narrow rail and the colour settings (signal + chassis).
+  look: [
+    { js: 'window.__pult.openServer(window.__pult.servers.find(s => s.id === "demo"))' },
+    { wait: 2500 },
+    { js: 'window.__pult.activeSession().setMode("split")' },
+    { wait: 800 },
+    { js: 'window.__pult.toggleRail()' },
+    { wait: 300 },
+    { js: 'window.__pult.updateSettings({ signal: "blue", body: "mint" })' },
+    { wait: 1200 },
+    { shot: 'look-mini-blue' },
+    { js: 'window.__pult.toggleRail(); window.__pult.updateSettings({ signal: "orange", body: "gray" })' },
+    { wait: 500 },
+  ],
+  // Quick commands, Claude's state from its hooks, the server health panel.
+  // Needs MOCK_ROOT (the mock's folder) to drop a hook event file.
+  features: [
+    { js: 'window.__pult.openServer(window.__pult.servers.find(s => s.id === "demo"))' },
+    { wait: 2500 },
+    { js: 'window.__pult.activeSession().addShell().then(() => 0)' },
+    { wait: 1500 },
+    { type: 'claude\r' },
+    { wait: 3000 },
+    { write: ['home/demo/.pult/state/event.pult-0002.json', () => JSON.stringify({ t: Math.floor(Date.now() / 1000), e: 'wait', d: { message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' } })] },
+    { wait: 3500 },
+    { js: 'window.__pult.activeSession().select(window.__pult.activeSession().shells[0])' },
+    { wait: 500 },
+    { shot: 'claude-wait' },
+    { js: 'window.__pult.activeSession().select(window.__pult.activeSession().shells[1])' },
+    { wait: 500 },
+    { shot: 'claude-wait-head' },
+    { js: 'window.__pult.activeSession().openSnippets()' },
+    { wait: 400 },
+    { shot: 'snippets-menu' },
+    { js: '[...document.querySelectorAll(".menu .menu-item")].pop().click()' },
+    { wait: 600 },
+    { shot: 'snippets-edit' },
+    { key: 'Escape' },
+    { wait: 16000 },
+    { js: 'document.querySelector(".sb-stat").click()' },
+    { wait: 2500 },
+    { shot: 'stats-panel' },
+  ],
+  // Image viewer, ports (SSH tunnels) panel, settings with the new switches.
+  features2: [
+    { js: 'window.__pult.openServer(window.__pult.servers.find(s => s.id === "demo"))' },
+    { wait: 2500 },
+    { js: 'window.__pult.activeSession().setMode("files")' },
+    { wait: 900 },
+    { js: 'window.__pult.activeSession().files.go("/home/demo/downloads")' },
+    { wait: 900 },
+    { js: 'window.__pult.activeSession().files.preview(window.__pult.activeSession().files.entries.find(e => e.name === (window.__pult.activeSession().files.entries.some(x => x.name === "pult-icon.png") ? "pult-icon.png" : "logo.png")))' },
+    { wait: 1500 },
+    { shot: 'image-preview' },
+    { key: 'Escape' },
+    { wait: 400 },
+    { js: 'document.querySelector(".sb-tun").click()' },
+    { wait: 1500 },
+    { shot: 'ports-panel' },
+    { key: 'Escape' },
+    { js: 'document.querySelector(".tb-settings").click()' },
+    { wait: 600 },
+    { js: 'document.querySelector(".modal .m-body").scrollTop = 99999' },
+    { wait: 300 },
+    { shot: 'settings-bottom' },
   ],
   osc52: [
     { js: 'window.__pult.openServer(window.__pult.servers.find(s => s.id === "demo"))' },
@@ -246,6 +312,13 @@ app.on('browser-window-created', (_e, win) => {
           win.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
         }
         if (step.chars) for (const ch of step.chars) win.webContents.sendInputEvent({ type: 'char', keyCode: ch });
+        if (step.write) {
+          // A file inside the mock server's folder (MOCK_ROOT), e.g. a Claude hook event.
+          const [rel, make] = step.write;
+          const file = path.join(process.env.MOCK_ROOT || '', rel);
+          fs.mkdirSync(path.dirname(file), { recursive: true });
+          fs.writeFileSync(file, typeof make === 'function' ? make() : make);
+        }
         if (step.clipboardImage) {
           const { clipboard, ClipboardItem } = require('electron');
           const png = fs.readFileSync(path.join(__dirname, '..', 'assets', 'icon.png'));

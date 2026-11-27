@@ -19,6 +19,9 @@ const store = require('./store');
 const { Connection } = require('./connection');
 const { TransferManager } = require('./transfers');
 const { AgentWatch, stamp } = require('./agents');
+const { Tunnels } = require('./tunnels');
+const { LocalEdits } = require('./localedit');
+const updater = require('./updater');
 const fsops = require('./fsops');
 
 const ROOT = path.join(__dirname, '..', '..');
@@ -36,9 +39,12 @@ const MIME = {
   '.svg': 'image/svg+xml',
 };
 
+// Window background and the Windows caption buttons, matched to the chassis
+// colour the renderer paints (see --body in styles.css).
+const BODY = { gray: '#e2e1db', mint: '#d9e3da', sky: '#d8e1ea', sand: '#e9dccb' };
 const COLORS = {
-  dark: { bg: '#0b0b0c', symbol: '#8e8e95' },
-  light: { bg: '#ffffff', symbol: '#5f5f66' },
+  dark: { bg: '#121314', symbol: '#ecece8' },
+  light: { bg: BODY.gray, symbol: '#121314' },
 };
 
 protocol.registerSchemesAsPrivileged([
@@ -52,7 +58,9 @@ if (!app.requestSingleInstanceLock()) {
 let win = null;
 const connections = new Map();
 const agentWatches = new Map();
+const tunnelSets = new Map();
 const transfers = new TransferManager((id) => connections.get(id));
+const localEdits = new LocalEdits((id) => connections.get(id));
 
 const send = (channel, ...args) => {
   if (win && !win.isDestroyed()) win.webContents.send(channel, ...args);
@@ -85,8 +93,15 @@ ipcMain.handle('prompt:answer', (_e, id, answer) => {
 const isDark = () => nativeTheme.shouldUseDarkColors;
 
 function overlayColors() {
-  const c = isDark() ? COLORS.dark : COLORS.light;
-  return { color: c.bg, symbolColor: c.symbol, height: 40 };
+  if (isDark()) return { color: COLORS.dark.bg, symbolColor: COLORS.dark.symbol, height: 40 };
+  const bg = BODY[store.getSettings().body] || COLORS.light.bg;
+  return { color: bg, symbolColor: COLORS.light.symbol, height: 40 };
+}
+
+function paintWindow() {
+  if (!win || win.isDestroyed()) return;
+  win.setTitleBarOverlay(overlayColors());
+  win.setBackgroundColor(overlayColors().color);
 }
 
 function createWindow() {
@@ -235,6 +250,8 @@ handle('settings:get', () => store.getSettings());
 handle('settings:set', (patch) => {
   const s = store.setSettings(patch);
   if ('theme' in patch) nativeTheme.themeSource = s.theme;
+  if ('body' in patch) paintWindow();
+  if ('transferPace' in patch) transfers.setFast(s.transferPace === 'fast');
   if ('agentUsage' in patch) for (const a of agentWatches.values()) a.setUsage(s.agentUsage !== false);
   return s;
 });
@@ -320,12 +337,24 @@ handle('conn:open', async (connId, serverId) => {
   const agents = new AgentWatch(c, { usage: store.getSettings().agentUsage !== false });
   agentWatches.set(connId, agents);
   agents.on('update', (s) => send('agents', connId, s));
+  const tunnels = new Tunnels(c);
+  tunnelSets.set(connId, tunnels);
+  tunnels.on('update', (list) => send('tun:update', connId, list));
+  let tunnelsStarted = false;
   c.on('state', (s) => {
     send('conn:state', connId, s);
+    if (s.state === 'ready' && !tunnelsStarted) {
+      // Ports saved for this server open again on every connect.
+      tunnelsStarted = true;
+      for (const t of Array.isArray(server.tunnels) ? server.tunnels : []) tunnels.add(t).catch(() => {});
+    }
     if (s.state === 'closed') {
       connections.delete(connId);
       agents.dispose();
       agentWatches.delete(connId);
+      tunnels.closeAll();
+      tunnelSets.delete(connId);
+      localEdits.dropConnection(connId);
     }
   });
   c.on('stats', (s) => send('conn:stats', connId, s));
@@ -351,6 +380,7 @@ handle('conn:retry', (connId) => conn(connId).retryNow());
 handle('shell:open', (connId, shellId, opts) => conn(connId).openShell(shellId, opts || {}));
 handle('shell:reopen', (connId, shellId) => conn(connId).reopenShell(shellId));
 handle('shell:close', (connId, shellId, opts) => conn(connId).closeShell(shellId, opts || {}));
+handle('shell:history', (connId, session, lines) => conn(connId).history(session, lines));
 
 // Hot paths use fire-and-forget messages.
 ipcMain.on('shell:write', (_e, connId, shellId, data, binary) => {
@@ -458,6 +488,95 @@ handle('fs:search', (connId, dir, query, mode) => fsops.search(conn(connId), dir
 handle('fs:info', (connId, p) => fsops.info(conn(connId), p));
 handle('fs:dirSize', (connId, p) => fsops.dirSize(conn(connId), p));
 
+/* ---------------- IPC: updates (GitHub Releases) ---------------- */
+
+let lastRelease = null;
+handle('update:check', async () => {
+  const r = await updater.check();
+  lastRelease = r.release;
+  return r;
+});
+handle('update:install', () => updater.install(lastRelease, (done, total) => send('update:progress', done, total)));
+handle('update:page', () => {
+  if (lastRelease?.page && /^https:\/\/github\.com\//.test(lastRelease.page)) shell.openExternal(lastRelease.page);
+});
+
+/* ---------------- IPC: preview / open on this computer ---------------- */
+
+const PREVIEW_MAX = 25 * 1024 * 1024;
+const IMAGE_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp', ico: 'image/x-icon', svg: 'image/svg+xml', avif: 'image/avif' };
+
+// An image as a data: URL (the page's CSP allows data: images, nothing else).
+handle('fs:preview', async (connId, p) => {
+  const mime = IMAGE_MIME[path.posix.extname(p).slice(1).toLowerCase()];
+  if (!mime) throw Object.assign(new Error('Bu turdagi faylni ko‘rib bo‘lmaydi'), { code: 'NO_PREVIEW' });
+  const sftp = await conn(connId).sftp();
+  const st = await call((cb) => sftp.stat(p, cb));
+  if (st.size > PREVIEW_MAX) throw Object.assign(new Error('Rasm juda katta (25 MB dan ortiq)'), { code: 'TOO_BIG' });
+  const data = await call((cb) => sftp.readFile(p, cb));
+  return { url: `data:${mime};base64,${data.toString('base64')}`, size: st.size, mtime: st.mtime };
+});
+
+handle('fs:openLocal', (connId, p) => localEdits.open(connId, p));
+handle('edit:force', (local) => localEdits.force(local));
+localEdits.on('synced', (item) => send('edit:synced', item));
+localEdits.on('conflict', (item) => send('edit:conflict', item));
+localEdits.on('failed', (item, message) => send('edit:failed', item, message));
+
+/* ---------------- IPC: port forwarding ---------------- */
+
+function tunnelsOf(connId) {
+  const t = tunnelSets.get(connId);
+  if (!t) throw new Error('Ulanish topilmadi');
+  return t;
+}
+
+/** Remember the forwarded ports on the server record, so they reopen next time. */
+async function saveTunnels(connId) {
+  const c = conn(connId);
+  const list = tunnelsOf(connId)
+    .publicList()
+    .map((t) => ({ remoteHost: t.remoteHost, remotePort: t.remotePort, localPort: t.wanted }));
+  c.server.tunnels = list;
+  await store.saveServer({ id: c.server.id, tunnels: list });
+}
+
+handle('tun:list', (connId) => tunnelsOf(connId).publicList());
+handle('tun:add', async (connId, spec) => {
+  const list = await tunnelsOf(connId).add(spec || {});
+  await saveTunnels(connId);
+  return list;
+});
+handle('tun:remove', async (connId, id) => {
+  const list = tunnelsOf(connId).remove(id);
+  await saveTunnels(connId);
+  return list;
+});
+handle('tun:scan', (connId) => tunnelsOf(connId).scan());
+
+/* ---------------- IPC: server health ---------------- */
+
+// Processes using the most CPU. No --sort: busybox ps lacks it.
+handle('sys:top', async (connId) => {
+  const r = await conn(connId).exec('ps -eo pid=,user=,pcpu=,pmem=,rss=,etimes=,args= 2>/dev/null', 10000);
+  const rows = [];
+  for (const line of String(r.stdout || '').split('\n')) {
+    const m = line.match(/^\s*(\d+)\s+(\S+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)\s+(\d+)\s+(.+)$/);
+    if (!m) continue;
+    const args = m[7].trim();
+    if (/^ps -eo pid=/.test(args)) continue; // ourselves
+    rows.push({ pid: Number(m[1]), user: m[2], cpu: Number(m[3]), mem: Number(m[4]), rss: Number(m[5]), etime: Number(m[6]), args: args.slice(0, 400) });
+  }
+  return rows.sort((a, b) => b.cpu - a.cpu || b.mem - a.mem).slice(0, 15);
+});
+
+handle('sys:kill', async (connId, pid, force = false) => {
+  const p = Number(pid);
+  if (!Number.isInteger(p) || p < 2) throw new Error('Noto‘g‘ri jarayon raqami');
+  const r = await conn(connId).exec(`kill -${force ? 'KILL' : 'TERM'} ${p}`, 8000);
+  if (r.code !== 0) throw new Error(String(r.stderr || '').trim() || 'Jarayonni to‘xtatib bo‘lmadi (ruxsat yo‘qdir)');
+});
+
 const MAX_EDIT_BYTES = 5 * 1024 * 1024;
 
 handle('sftp:readText', async (connId, p) => {
@@ -550,14 +669,10 @@ app.whenReady().then(() => {
   app.setAppUserModelId('uz.pult.app');
   Menu.setApplicationMenu(null);
   nativeTheme.themeSource = store.getSettings().theme || 'system';
-  nativeTheme.on('updated', () => {
-    if (win && !win.isDestroyed()) {
-      win.setTitleBarOverlay(overlayColors());
-      win.setBackgroundColor(overlayColors().color);
-    }
-  });
+  nativeTheme.on('updated', paintWindow);
 
   registerProtocol();
+  transfers.setFast(store.getSettings().transferPace === 'fast');
   createWindow();
 
   // After sleep or a network change the old socket may be silently dead.

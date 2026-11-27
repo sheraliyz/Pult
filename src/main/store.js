@@ -57,7 +57,7 @@ function publicServer(s) {
   return { ...rest, hasPassword: !!password, hasPassphrase: !!passphrase };
 }
 
-const SERVER_FIELDS = ['name', 'host', 'port', 'username', 'auth', 'keyPath', 'persist', 'startDir'];
+const SERVER_FIELDS = ['name', 'host', 'port', 'username', 'auth', 'keyPath', 'persist', 'startDir', 'tunnels'];
 
 module.exports.listServers = () => allServers().map(publicServer);
 
@@ -81,6 +81,11 @@ module.exports.saveServer = async (input) => {
   s.username = String(s.username || '').trim();
   s.name = String(s.name || '').trim() || s.host;
   s.port = Number(s.port) || 22;
+  // Forwarded ports (see tunnels.js): only well-formed entries are kept.
+  s.tunnels = (Array.isArray(s.tunnels) ? s.tunnels : [])
+    .map((t) => ({ remoteHost: String(t?.remoteHost || '127.0.0.1'), remotePort: Number(t?.remotePort), localPort: Number(t?.localPort) || Number(t?.remotePort) }))
+    .filter((t) => t.remotePort > 0 && t.remotePort < 65536 && t.localPort > 0 && t.localPort < 65536)
+    .slice(0, 20);
   if (password !== undefined) s.password = password;
   if (passphrase !== undefined) s.passphrase = passphrase;
   saveServers();
@@ -169,12 +174,25 @@ module.exports.importSshConfig = async () => {
 
 const DEFAULT_SETTINGS = {
   theme: 'system',
-  fontSize: 13,
+  signal: 'orange', // orange | yellow | blue | green
+  body: 'gray', // chassis colour in the light theme: gray | mint | sky | sand
+  fontSize: 14,
   cursorStyle: 'bar',
   cursorBlink: true,
   copyOnSelect: false,
   scrollback: 10000,
+  // Quick commands (top bar "Buyruqlar", Alt+1…9). run: press Enter after typing.
+  snippets: [
+    { name: '', cmd: 'df -h', run: true },
+    { name: '', cmd: 'free -h', run: true },
+    { name: '', cmd: 'docker ps', run: true },
+    { name: '', cmd: 'systemctl --failed', run: true },
+  ],
+  checkUpdates: true, // look for a newer Pult on GitHub Releases
+  restoreSessions: true, // reconnect to the servers that were open last time
+  restoreHistory: true, // show a re-attached terminal's earlier output (tmux history)
   downloadDir: '',
+  transferPace: 'smooth', // smooth: keep the ping low while files move · fast: no pacing
   // AI agents (Claude Code, agy)
   agentUsage: true,
   agentNotify: true,

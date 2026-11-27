@@ -2,7 +2,7 @@
 
 import { call, on, send } from './api.js';
 import { h, icon, clear, fmt } from './dom.js';
-import { toast } from './ui.js';
+import { toast, confirmDialog, modal } from './ui.js';
 import { Home, serverForm } from './home.js';
 import { Session } from './session.js';
 import { handlePrompt } from './prompts.js';
@@ -10,16 +10,23 @@ import { openSettings } from './settings.js';
 import { Transfers } from './xfer.js';
 import { onThemeChange } from './terminal.js';
 import { usageChips, closeUsagePanel } from './agents.js';
-
-const STATE_LABEL = {
-  connecting: 'Ulanmoqda',
-  ready: 'Ulangan',
-  reconnecting: 'Qayta ulanmoqda',
-  failed: 'Ulanmadi',
-  closed: 'Yopilgan',
-};
+import { recordStats, openStatsPanel, refreshStatsPanel, closeStatsPanel } from './stats.js';
+import { openTunnelPanel, refreshTunnelPanel, closeTunnelPanel } from './tunnels.js';
 
 const LAYOUT_KEY = 'pult.layout';
+
+// Rail mode keys: [mode, icon, label, tooltip].
+const MODES = [
+  ['terminal', 'terminal', 'Terminal', 'Terminal · Ctrl+Shift+1'],
+  ['files', 'folder', 'Fayllar', 'Fayllar · Ctrl+Shift+2'],
+  ['split', 'split', 'Yonma-yon', 'Yonma-yon · Ctrl+Shift+3'],
+];
+
+/** "1.5 GB" → ["1.5", "GB"]: the number goes in the dot-matrix face. */
+const splitUnit = (text) => {
+  const i = String(text).lastIndexOf(' ');
+  return i > 0 ? [text.slice(0, i), text.slice(i + 1)] : [String(text), ''];
+};
 
 class App {
   constructor() {
@@ -39,12 +46,12 @@ class App {
 
   async init() {
     [this.settings, this.servers, this.info] = await Promise.all([call('settings:get'), call('servers:list'), call('app:info')]);
+    this.applyLook();
 
-    this.titlebar = document.getElementById('titlebar');
     this.views = document.getElementById('views');
     this.statusbar = document.getElementById('statusbar');
 
-    this.buildTitlebar();
+    this.buildRail();
     this.home = new Home(this);
     this.views.append(this.home.el);
     this.home.render();
@@ -61,31 +68,193 @@ class App {
       document.fonts.load(`bold ${this.settings.fontSize}px "JetBrains Mono"`),
     ]).catch(() => {});
     document.body.classList.add('ready');
+    this.restoreOpen();
+    // A newer Pult on GitHub? Checked a little after start, then twice a day.
+    setTimeout(() => this.checkUpdate(), 8000);
+    setInterval(() => this.checkUpdate(), 12 * 3600e3);
   }
 
-  /* ---------------- title bar ---------------- */
+  async checkUpdate({ manual = false } = {}) {
+    if (!manual && this.settings.checkUpdates === false) return null;
+    let r;
+    try {
+      r = await call('update:check');
+    } catch (err) {
+      if (manual) toast(`Tekshirib bo‘lmadi: ${err.message}`, 'err', 5000);
+      return null;
+    }
+    let skipped = null;
+    try {
+      skipped = localStorage.getItem('pult.update.skip');
+    } catch {
+      // Non-essential.
+    }
+    this.update = r.available && (manual || skipped !== r.release.version) ? r : null;
+    this.renderStatus();
+    if (manual) {
+      if (this.update) this.showUpdate();
+      else toast(`Pult ${r.current} — eng so‘nggi versiya`, 'ok', 3000);
+    }
+    return r;
+  }
 
-  buildTitlebar() {
+  async showUpdate() {
+    const u = this.update;
+    if (!u) return;
+    const notes = u.release.notes.trim();
+    const bar = h('div', { class: 'up-bar', hidden: true }, h('span'));
+    const status = h('div', { class: 'up-status' });
+    const choice = await modal({
+      title: `Pult ${u.release.version} chiqdi`,
+      icon: 'download',
+      width: 560,
+      body: h(
+        'div',
+        { class: 'up' },
+        h('p', { class: 'm-text' }, `Sizda ${u.current} turibdi. ${u.portable ? 'Bu ko‘chma (portable) versiya: yangisini release sahifasidan yuklab oling.' : 'Yangi versiya yuklab olinadi va o‘rnatiladi; Pult o‘zi qayta ochiladi, terminallaringiz (tmux) saqlanib qoladi.'}`),
+        notes && h('div', { class: 'up-notes' }, notes),
+        bar,
+        status,
+      ),
+      actions: [
+        { label: 'Keyinroq', value: 'later' },
+        { label: 'Bu versiyani o‘tkazib yuborish', value: 'skip' },
+        u.portable || !u.release.installer
+          ? { label: 'Sahifani ochish', kind: 'primary', onClick: () => (call('update:page'), 'page') }
+          : {
+              label: 'O‘rnatish',
+              kind: 'primary',
+              onClick: async () => {
+                bar.hidden = false;
+                status.textContent = 'Yuklanmoqda…';
+                const off = on('update:progress', (done, total) => {
+                  bar.firstChild.style.width = total ? `${Math.round((done / total) * 100)}%` : '30%';
+                  status.textContent = `Yuklanmoqda… ${fmt.bytes(done)}${total ? ` / ${fmt.bytes(total)}` : ''}`;
+                });
+                try {
+                  await call('update:install');
+                  status.textContent = 'O‘rnatuvchi ishga tushdi — Pult yopiladi';
+                  return false;
+                } catch (err) {
+                  status.textContent = `Bo‘lmadi: ${err.message}`;
+                  return false;
+                } finally {
+                  off();
+                }
+              },
+            },
+      ],
+    }).promise;
+    if (choice === 'skip') {
+      try {
+        localStorage.setItem('pult.update.skip', u.release.version);
+      } catch {
+        // Non-essential.
+      }
+      this.update = null;
+      this.renderStatus();
+    }
+  }
+
+  /** Reconnect to the servers that were open when Pult was closed (their tmux sessions are still there). */
+  restoreOpen() {
+    const saved = Array.isArray(this.layout.open) ? this.layout.open : [];
+    if (this.settings.restoreSessions === false || !saved.length) return;
+    this.restoring = true;
+    for (const id of saved) {
+      const server = this.servers.find((x) => x.id === id);
+      if (server && !this.sessionFor(id)) this.openServer(server);
+    }
+    this.restoring = false;
+    const active = this.layout.active && this.sessionFor(this.layout.active);
+    if (active) this.activate(active.id);
+    this.saveOpen();
+  }
+
+  /** Which servers are open and which one is in front, for the next start. */
+  saveOpen() {
+    if (this.restoring) return;
+    const active = this.activeSession();
+    this.saveLayout({ open: [...this.sessions.values()].map((s) => s.server.id), active: active ? active.server.id : null });
+  }
+
+  /* ---------------- rail (left control column) ---------------- */
+
+  buildRail() {
+    this.rail = document.getElementById('rail');
+    this.tabsEl = h('div', { class: 'rail-servers', role: 'tablist', 'aria-label': 'Ochiq ulanishlar' });
     this.homeTab = h(
       'button',
-      { class: 'tab tab-home', type: 'button', 'data-tip': 'Serverlar', onclick: () => this.activate('home') },
-      icon('grid', 16),
+      { class: 'key rail-home', type: 'button', 'data-tip': 'Barcha serverlar', onclick: () => this.activate('home') },
+      icon('grid', 17),
+      h('span', { class: 'key-label' }, 'Serverlar'),
     );
-    this.tabsEl = h('div', { class: 'tabs', role: 'tablist' });
+    this.modeKeys = MODES.map(([mode, ic, label, tip]) =>
+      h(
+        'button',
+        { class: 'key mode-key', type: 'button', dataset: { mode }, 'data-tip': tip, onclick: () => this.activeSession()?.setMode(mode) },
+        icon(ic, 18),
+        h('span', { class: 'key-label' }, label),
+      ),
+    );
+    this.modesEl = h('div', { class: 'rail-modes', role: 'group', 'aria-label': 'Rejim' }, h('div', { class: 'rail-label' }, 'Rejim'), this.modeKeys);
+    this.railToggle = h('button', { class: 'key key-gray key-xs rail-collapse', type: 'button', onclick: () => this.toggleRail() });
     clear(
-      this.titlebar,
-      h('div', { class: 'brand' }, icon('logo', 18)),
-      this.homeTab,
+      this.rail,
+      h('div', { class: 'rail-top' }, h('span', { class: 'logo' }, 'pult'), h('span', { class: 'logo-led' }), h('span', { class: 'grow' }), this.railToggle),
+      h('div', { class: 'rail-label' }, 'Serverlar'),
       this.tabsEl,
-      h('button', { class: 'tab-new', type: 'button', 'data-tip': 'Yangi ulanish', onclick: () => this.activate('home') }, icon('plus', 15)),
-      h('div', { class: 'drag' }),
-      h('button', { class: 'icon-btn tb-settings', type: 'button', 'data-tip': 'Sozlamalar · Ctrl+,', onclick: () => openSettings(this) }, icon('sliders', 16)),
+      h(
+        'div',
+        { class: 'rail-row' },
+        this.homeTab,
+        h('button', { class: 'key key-gray key-icon rail-add', type: 'button', 'data-tip': 'Yangi server · Ctrl+Shift+N', 'aria-label': 'Yangi server', onclick: () => this.editServer() }, icon('plus', 17)),
+      ),
+      h('div', { class: 'grow' }),
+      this.modesEl,
+      h('div', { class: 'rail-sep' }),
+      h(
+        'button',
+        { class: 'key key-gray tb-settings', type: 'button', 'data-tip': 'Sozlamalar · Ctrl+,', onclick: () => openSettings(this) },
+        icon('sliders', 17),
+        h('span', { class: 'key-label' }, 'Sozlamalar'),
+        h('span', { class: 'key-hint' }, 'Ctrl+,'),
+      ),
     );
+    this.applyRail();
+  }
+
+  /** Narrow rail: only icons and two-letter server badges. */
+  toggleRail() {
+    this.saveLayout({ railMini: !this.layout.railMini });
+    this.applyRail();
+  }
+
+  applyRail() {
+    const mini = !!this.layout.railMini;
+    document.getElementById('app').classList.toggle('rail-mini', mini);
+    this.railToggle.dataset.tip = mini ? 'Panelni yoyish' : 'Panelni yig‘ish';
+    this.railToggle.setAttribute('aria-label', this.railToggle.dataset.tip);
+    this.railToggle.replaceChildren(icon(mini ? 'chevronRight' : 'chevronLeft', 14));
   }
 
   renderTabs() {
     this.homeTab.classList.toggle('on', this.activeId === 'home');
     for (const s of this.sessions.values()) s.tab.classList.toggle('on', s.id === this.activeId);
+    this.renderModes();
+  }
+
+  renderModes() {
+    const s = this.activeSession();
+    this.modesEl.hidden = !s;
+    for (const b of this.modeKeys) b.classList.toggle('on', !!s && b.dataset.mode === s.mode);
+  }
+
+  /** Signal colour and chassis colour from the settings, as CSS variables. */
+  applyLook() {
+    const root = document.documentElement;
+    root.dataset.signal = this.settings.signal || 'orange';
+    root.dataset.body = this.settings.body || 'gray';
   }
 
   /* ---------------- status bar ---------------- */
@@ -93,63 +262,57 @@ class App {
   buildStatusbar() {
     this.sbLeft = h('div', { class: 'sb-left' });
     this.sbRight = h('div', { class: 'sb-right' });
-    clear(this.statusbar, this.sbLeft, this.sbRight, this.transfers.chip);
+    clear(this.statusbar, this.sbLeft, h('div', { class: 'grow' }), this.sbRight, this.transfers.chip);
   }
 
   renderStatus() {
+    const chip = (label, value, unit, { cls = '', tip = null, onclick = null } = {}) =>
+      h(
+        onclick ? 'button' : 'span',
+        { class: `sb-chip ${cls} ${onclick ? 'sb-stat' : ''}`, type: onclick ? 'button' : null, 'data-tip': tip, onclick },
+        h('span', { class: 'sb-label' }, label),
+        h('span', { class: 'sb-num' }, value),
+        unit && h('span', { class: 'sb-unit' }, unit),
+      );
+    const update = this.update && chip('Yangi', this.update.release.version, null, { cls: 'sb-update', tip: 'Pult’ning yangi versiyasi — bosing', onclick: () => this.showUpdate() });
     const s = this.sessions.get(this.activeId);
     if (!s) {
       this.statusbar.classList.remove('has-agents');
       const open = this.sessions.size;
-      clear(
-        this.sbLeft,
-        h('span', { class: 'sb-item' }, icon('logo', 13), `Pult ${this.info.version || ''}`),
-        open > 0 && h('span', { class: 'sb-item muted' }, `${open} ta ochiq ulanish`),
-      );
+      clear(this.sbLeft, chip('Pult', this.info.version || '', null, { cls: 'sb-brand' }), update, open > 0 && chip('Ochiq', String(open), 'ta ulanish'));
       clear(this.sbRight);
       return;
     }
     const st = s.state;
-    const { username, host, port } = s.server;
     const agents = st.state === 'ready' ? usageChips(s) : [];
     this.statusbar.classList.toggle('has-agents', agents.length > 0);
-    clear(
-      this.sbLeft,
-      h('span', { class: `sb-item sb-state state-${st.state}` }, h('span', { class: 'sb-dot' }), STATE_LABEL[st.state] || st.state),
-      h('span', { class: 'sb-item sb-addr mono' }, `${username}@${host}${port && port !== 22 ? `:${port}` : ''}`),
-      st.state === 'ready' &&
-        (s.active?.persistent
-          ? h('span', { class: 'sb-badge', 'data-tip': 'tmux: aloqa uzilsa ham sessiya saqlanadi' }, icon('shield', 12), 'saqlanadi')
-          : st.persist && !st.hasTmux && h('span', { class: 'sb-badge muted', 'data-tip': 'Serverda tmux yo‘q — sessiya saqlanmaydi' }, 'tmux yo‘q')),
-      agents.length > 0 && h('span', { class: 'sb-sep' }),
-      agents,
-    );
+    clear(this.sbLeft, agents, update);
 
     const m = s.stats;
     if (st.state !== 'ready' || !m) {
       clear(this.sbRight);
       return;
     }
-    const meter = (label, ratio, text, tip, cls = '') =>
-      ratio == null
-        ? null
-        : h(
-            'span',
-            { class: `sb-item sb-metric ${cls}`, 'data-tip': tip },
-            h('span', { class: 'sb-label' }, label),
-            h('span', { class: `sb-meter ${ratio > 0.9 ? 'crit' : ratio > 0.75 ? 'warn' : ''}` }, h('span', { style: { width: `${Math.max(2, ratio * 100)}%` } })),
-            h('span', { class: 'sb-val' }, text),
-          );
-    const rtt = m.rtt;
+    const tone = (r) => (r > 0.9 ? 'crit' : r > 0.75 ? 'warn' : '');
     const mem = m.memTotal ? m.memUsed / m.memTotal : null;
+    const disk = m.diskTotal ? m.diskUsed / m.diskTotal : null;
+    let ram = null;
+    if (mem != null) {
+      const [uv, uu] = splitUnit(fmt.bytes(m.memUsed));
+      const [tv, tu] = splitUnit(fmt.bytes(m.memTotal));
+      ram = chip('RAM', uv, `${uu === tu ? '' : `${uu} `}/ ${tv} ${tu}`, { cls: `sb-ram ${tone(mem)}`, tip: `Operativ xotira — ${Math.round(mem * 100)}% band · bosing: grafiklar`, onclick: () => openStatsPanel(s) });
+    }
+    const [upv, upu] = splitUnit(fmt.uptime(m.uptime));
+    const open = () => openStatsPanel(s);
+    const ports = (s.tunnels || []).length;
     clear(
       this.sbRight,
-      rtt != null && h('span', { class: `sb-item sb-rtt ${rtt > 250 ? 'warn' : ''}`, 'data-tip': 'Kechikish (ping)' }, h('span', { class: 'sb-label' }, 'Ping'), h('span', { class: 'sb-val' }, `${rtt} ms`)),
-      meter('CPU', m.cpu, `${Math.round((m.cpu || 0) * 100)}%`, 'Protsessor yuklamasi'),
-      m.memTotal &&
-        meter('RAM', mem, [h('span', { class: 'sb-long' }, `${fmt.bytes(m.memUsed)} / ${fmt.bytes(m.memTotal)}`), h('span', { class: 'sb-short' }, `${Math.round(mem * 100)}%`)], `Operativ xotira — ${fmt.bytes(m.memUsed)} / ${fmt.bytes(m.memTotal)}`),
-      m.diskTotal && meter('Disk', m.diskUsed / m.diskTotal, `${Math.round((m.diskUsed / m.diskTotal) * 100)}%`, `/ — ${fmt.bytes(m.diskUsed)} / ${fmt.bytes(m.diskTotal)}`, 'sb-disk'),
-      m.uptime && h('span', { class: 'sb-item sb-uptime', 'data-tip': 'Server ishlab turgan vaqt' }, h('span', { class: 'sb-label' }, 'Uptime'), h('span', { class: 'sb-val' }, fmt.uptime(m.uptime))),
+      chip('Port', String(ports), ports ? 'ochiq' : '', { cls: 'sb-tun sb-gray', tip: 'Serverdagi portni shu kompyuterda ochish (SSH tunnel)', onclick: () => openTunnelPanel(s) }),
+      m.rtt != null && chip('Ping', String(m.rtt), 'ms', { cls: m.rtt > 250 ? 'warn' : '', tip: 'Kechikish — bosing: grafiklar va jarayonlar', onclick: open }),
+      m.cpu != null && chip('CPU', String(Math.round(m.cpu * 100)), '%', { cls: tone(m.cpu), tip: 'Protsessor — bosing: grafiklar va jarayonlar', onclick: open }),
+      ram,
+      disk != null && chip('Disk', String(Math.round(disk * 100)), '%', { cls: `sb-disk ${tone(disk)}`, tip: `/ — ${fmt.bytes(m.diskUsed)} / ${fmt.bytes(m.diskTotal)}` }),
+      m.uptime && chip('Uptime', upv, upu, { cls: 'sb-uptime sb-gray', tip: 'Server ishlab turgan vaqt' }),
     );
   }
 
@@ -157,12 +320,17 @@ class App {
 
   activate(id) {
     if (id !== 'home' && !this.sessions.has(id)) id = 'home';
-    if (id !== this.activeId) closeUsagePanel();
+    if (id !== this.activeId) {
+      closeUsagePanel();
+      closeStatsPanel();
+      closeTunnelPanel();
+    }
     this.activeId = id;
     this.home.el.classList.toggle('on', id === 'home');
     for (const s of this.sessions.values()) s.el.classList.toggle('on', s.id === id);
     this.renderTabs();
     this.renderStatus();
+    this.saveOpen();
     if (id === 'home') {
       this.home.render();
       document.activeElement?.blur?.();
@@ -208,6 +376,7 @@ class App {
     this.sessions.delete(s.id);
     s.tab.remove();
     s.el.remove();
+    this.saveOpen();
     if (this.activeId === s.id) {
       const next = ids[idx + 1] || ids[idx - 1];
       this.activate(next && this.sessions.has(next) ? next : 'home');
@@ -227,6 +396,7 @@ class App {
       if (s.server.id === fresh.id) {
         s.server = { ...s.server, ...fresh };
         s.tab.querySelector('.tab-label').textContent = fresh.name;
+        s.renderTitle();
       }
     }
     if (r.connect) {
@@ -256,6 +426,10 @@ class App {
   async updateSettings(patch) {
     this.settings = await call('settings:set', patch);
     for (const view of this.shells.values()) view.applySettings(this.settings);
+    if ('signal' in patch || 'body' in patch) {
+      this.applyLook();
+      for (const view of this.shells.values()) view.applyTheme();
+    }
     if ('agentUsage' in patch) this.renderStatus();
   }
 
@@ -291,6 +465,8 @@ class App {
       const s = this.sessions.get(connId);
       if (!s) return;
       s.stats = stats;
+      recordStats(s, stats);
+      refreshStatsPanel(s);
       if (connId === this.activeId) this.renderStatus();
     });
     on('shell:data', (shellId, data) => this.shells.get(shellId)?.receive(data));
@@ -305,7 +481,7 @@ class App {
       if (!v) return;
       const s = v.session;
       // `exit` in one of several terminals simply closes that tab.
-      if (s.shells.length > 1) s.closeShell(v);
+      if (s.shells.length > 1) s.closeShell(v, { confirm: false });
       else {
         v.onExit();
         s.renderShellTabs();
@@ -328,6 +504,29 @@ class App {
       else toast(`${job.kind === 'upload' ? 'Yuklandi' : 'Yuklab olindi'}: ${job.name}`, 'ok');
     });
     on('agents', (connId, st) => this.sessions.get(connId)?.onAgents(st));
+    // "Open on this computer": saves there are copied back to the server.
+    on('edit:synced', (item) => {
+      toast(`Serverga saqlandi: ${item.name}`, 'ok', 2200);
+      const files = this.sessions.get(item.connId)?.files;
+      if (files && item.remote.slice(0, item.remote.lastIndexOf('/')) === files.cwd) files.refresh();
+    });
+    on('edit:failed', (item, message) => toast(`${item.name} serverga saqlanmadi: ${message}`, 'err', 6000));
+    on('edit:conflict', async (item) => {
+      const ok = await confirmDialog({
+        title: 'Serverdagi fayl o‘zgargan',
+        message: `“${item.name}” siz ochganingizdan keyin serverda o‘zgartirilgan. Kompyuterdagi nusxangiz bilan ustidan yozilsinmi?`,
+        confirm: 'Ustidan yozish',
+        danger: true,
+      });
+      if (ok) call('edit:force', item.local);
+    });
+    on('tun:update', (connId, list) => {
+      const s = this.sessions.get(connId);
+      if (!s) return;
+      s.tunnels = list;
+      refreshTunnelPanel(s);
+      if (connId === this.activeId) this.renderStatus();
+    });
     on('notify:click', (tag) => {
       const [sid, vid] = String(tag || '').split('/');
       const s = this.sessions.get(sid);
@@ -382,7 +581,9 @@ class App {
     else if (ctrl && e.shiftKey && e.code === 'KeyN') this.editServer();
     else if (ctrl && e.shiftKey && e.code === 'KeyA' && s && s.state.state === 'ready') s.openAgentMenu();
     else if (ctrl && !e.shiftKey && e.code === 'Comma') openSettings(this);
-    else handled = false;
+    else if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && /^Digit[1-9]$/.test(e.code) && s && (this.settings.snippets || [])[Number(e.code.slice(5)) - 1]) {
+      s.runSnippet(this.settings.snippets[Number(e.code.slice(5)) - 1]);
+    } else handled = false;
     if (handled) {
       e.preventDefault();
       e.stopPropagation();

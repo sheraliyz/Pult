@@ -58,6 +58,10 @@ const PATHS = {
   more: '<circle cx="6.5" cy="12" r="1.1" fill="currentColor"/><circle cx="12" cy="12" r="1.1" fill="currentColor"/><circle cx="17.5" cy="12" r="1.1" fill="currentColor"/>',
   chevron: '<path d="M10 7l5 5-5 5"/>',
   chevronDown: '<path d="M7 10l5 5 5-5"/>',
+  chevronLeft: '<path d="M14.5 6.5L9 12l5.5 5.5"/>',
+  filter: '<path d="M4.5 6h15l-5.8 6.8v5l-3.4 1.7v-6.7z"/>',
+  bolt: '<path d="M13 3.5L5.5 13.5h6l-1 7 7.5-10h-6z"/>',
+  chevronRight: '<path d="M9.5 6.5L15 12l-5.5 5.5"/>',
   check: '<path d="M5.5 12.5l4 4 9-9"/>',
   lock: '<rect x="5.5" y="10.5" width="13" height="9" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>',
   key: '<circle cx="8.5" cy="15.5" r="3.5"/><path d="M11 13l7.5-7.5M15.5 8.5l2.5 2.5"/>',
@@ -214,5 +218,8 @@ export const posix = {
     return p.replace(/\/+$/, '').split('/').pop() || '/';
   },
 };
+
+/** Two letters for a server badge: "acme-prod" → "AC". */
+export const initials = (s) => (String(s || '').match(/[\p{L}\p{N}]/gu) || ['?']).slice(0, 2).join('').toUpperCase();
 
 export const shellQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;

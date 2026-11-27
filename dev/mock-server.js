@@ -7,6 +7,7 @@
 
 const { Server, utils } = require('ssh2');
 const fs = require('fs');
+const net = require('net');
 const path = require('path');
 const os = require('os');
 
@@ -563,6 +564,18 @@ new Server({ hostKeys: [hostKey] }, (client, info) => {
     ctx.reject(['password', 'keyboard-interactive']);
   });
   client.on('ready', () => {
+    // SSH tunnels (direct-tcpip): connect to the target on this machine.
+    client.on('tcpip', (accept, reject, info) => {
+      const sock = net.connect(info.destPort, info.destIP === 'localhost' ? '127.0.0.1' : info.destIP);
+      sock.once('connect', () => {
+        const ch = accept();
+        ch.on('error', () => {});
+        ch.pipe(sock).pipe(ch);
+        ch.on('close', () => sock.destroy());
+        sock.on('close', () => ch.close?.());
+      });
+      sock.once('error', () => reject());
+    });
     client.on('session', (accept) => {
       const session = accept();
       let pty = false;
@@ -581,6 +594,35 @@ new Server({ hostKeys: [hostKey] }, (client, info) => {
         if (cmd.includes('ls -F')) {
           stream.write('T\n');
           stream.write(`H ${HOME}\n`);
+          stream.exit(0);
+          return stream.end();
+        }
+        if (cmd.includes('capture-pane')) {
+          // tmux history of a terminal (restored above its screen on re-attach)
+          stream.write('earlier output 1\n\x1b[32mearlier output 2\x1b[0m   \n');
+          stream.exit(0);
+          return stream.end();
+        }
+        if (cmd.includes('ps -eo pid=')) {
+          // Server holati: the busiest processes
+          stream.write(
+            '  812 root      38.5  2.1  86432 /usr/bin/dockerd -H fd://\n' +
+              ' 1203 postgres   4.0 11.3 466120 postgres: checkpointer\n' +
+              '    1 root       0.0  0.3  12800 /sbin/init\n' +
+              ' 2210 demo      12.2  5.0 205000 node /home/demo/apps/api/server.js\n',
+          );
+          stream.exit(0);
+          return stream.end();
+        }
+        if (cmd.includes('ss -ltn')) {
+          // Portlar: what the server listens on (MOCK_HTTP_PORT: a real local web server for tunnel tests)
+          const web = process.env.MOCK_HTTP_PORT || '8080';
+          stream.write(
+            'LISTEN 0 4096 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=700,fd=3))\n' +
+              `LISTEN 0 511 127.0.0.1:${web} 0.0.0.0:* users:(("node",pid=2210,fd=19))\n` +
+              'LISTEN 0 244 127.0.0.1:5432 0.0.0.0:* users:(("postgres",pid=1203,fd=6))\n' +
+              'LISTEN 0 4096 [::]:443 [::]:* users:(("nginx",pid=900,fd=8))\n',
+          );
           stream.exit(0);
           return stream.end();
         }

@@ -18,6 +18,56 @@ export async function openSettings(app) {
     (v) => set({ theme: v }),
   );
 
+  // Signal colour (active keys, cursor, limits) and chassis colour (light theme).
+  const swatches = (options, value, onPick) => {
+    const el = h('div', { class: 'swatches', role: 'radiogroup' });
+    const buttons = options.map(([v, label, color]) =>
+      h(
+        'button',
+        {
+          class: `swatch ${v === value ? 'on' : ''}`,
+          type: 'button',
+          role: 'radio',
+          'aria-checked': String(v === value),
+          'aria-label': label,
+          'data-tip': label,
+          style: `--sw: ${color}`,
+          onclick: () => {
+            for (const b of buttons) {
+              const on = b === buttons[options.findIndex((o) => o[0] === v)];
+              b.classList.toggle('on', on);
+              b.setAttribute('aria-checked', String(on));
+            }
+            onPick(v);
+          },
+        },
+        h('span', { class: 'swatch-dot' }),
+      ),
+    );
+    el.append(...buttons);
+    return el;
+  };
+  const signal = swatches(
+    [
+      ['orange', 'To‘q sariq', '#ff5a1f'],
+      ['yellow', 'Sariq', '#ffc21a'],
+      ['blue', 'Ko‘k', '#3d7bff'],
+      ['green', 'Yashil', '#2bd47d'],
+    ],
+    s.signal || 'orange',
+    (v) => set({ signal: v }),
+  );
+  const body = swatches(
+    [
+      ['gray', 'Kulrang', '#e2e1db'],
+      ['mint', 'Yalpiz', '#d9e3da'],
+      ['sky', 'Osmon', '#d8e1ea'],
+      ['sand', 'Qum', '#e9dccb'],
+    ],
+    s.body || 'gray',
+    (v) => set({ body: v }),
+  );
+
   const sizeValue = h('span', { class: 'stepper-value mono' }, String(s.fontSize));
   const step = (d) => {
     const v = Math.max(9, Math.min(24, app.settings.fontSize + d));
@@ -44,6 +94,8 @@ export async function openSettings(app) {
 
   const blink = toggleRow('Kursor miltillashi', null, s.cursorBlink, (v) => set({ cursorBlink: v }));
   const copySel = toggleRow('Belgilanganda nusxalash', 'Matnni sichqoncha bilan belgilash bilanoq buferga olinadi.', s.copyOnSelect, (v) => set({ copyOnSelect: v }));
+  const restore = toggleRow('Oxirgi serverlarga ulanish', 'Pult ochilganda, yopilishidan oldin ochiq bo‘lgan serverlarga o‘zi ulanadi.', s.restoreSessions !== false, (v) => set({ restoreSessions: v }));
+  const history = toggleRow('Terminal tarixini tiklash', 'Qayta ochilgan terminalda avvalgi chiqish ham ko‘rinadi (tmux tarixidan).', s.restoreHistory !== false, (v) => set({ restoreHistory: v }));
 
   const dirLabel = h('span', { class: 'dir-path mono' }, s.downloadDir || (await call('downloads:dir')));
   const pickDir = h('button', {
@@ -59,6 +111,16 @@ export async function openSettings(app) {
   }, 'O‘zgartirish');
 
   const row = (label, control) => h('div', { class: 'set-row' }, h('div', { class: 'set-label' }, label), control);
+  const pace = segmented(
+    [
+      { value: 'smooth', label: 'Ping past' },
+      { value: 'fast', label: 'Maksimal tezlik' },
+    ],
+    s.transferPace === 'fast' ? 'fast' : 'smooth',
+    (v) => set({ transferPace: v }),
+  );
+  const updates = toggleRow('Yangilanishlarni tekshirish', 'GitHub’da Pult’ning yangi versiyasi chiqsa, holat qatorida taklif qilinadi.', s.checkUpdates !== false, (v) => set({ checkUpdates: v }));
+  const checkNow = h('button', { class: 'btn btn-sm', type: 'button', onclick: () => app.checkUpdate({ manual: true }) }, icon('refresh', 14), 'Hozir tekshirish');
 
   // AI agents on the server (Claude Code, agy).
   const usage = toggleRow('Limitlarni ko‘rsatish', 'Claude Code va agy obuna limitlari (5 soatlik, haftalik) holat qatorida turadi.', s.agentUsage !== false, (v) => set({ agentUsage: v }));
@@ -70,11 +132,18 @@ export async function openSettings(app) {
     return input;
   };
 
-  const body = h(
+  const content = h(
     'div',
     // Focus lands here, not in the first text field (the agent commands).
     { class: 'settings', tabindex: '-1', autofocus: true },
-    h('div', { class: 'set-group' }, h('div', { class: 'set-title' }, 'Ko‘rinish'), row('Mavzu', theme.el)),
+    h(
+      'div',
+      { class: 'set-group' },
+      h('div', { class: 'set-title' }, 'Ko‘rinish'),
+      row('Mavzu', theme.el),
+      row('Signal rangi', signal),
+      row('Korpus rangi', body),
+    ),
     h(
       'div',
       { class: 'set-group' },
@@ -83,8 +152,17 @@ export async function openSettings(app) {
       row('Kursor', cursor.el),
       blink.el,
       copySel.el,
+      restore.el,
+      history.el,
     ),
-    h('div', { class: 'set-group' }, h('div', { class: 'set-title' }, 'Fayllar'), row('Yuklab olish', h('div', { class: 'dir-row' }, dirLabel, pickDir))),
+    h(
+      'div',
+      { class: 'set-group' },
+      h('div', { class: 'set-title' }, 'Fayllar'),
+      row('Yuklab olish', h('div', { class: 'dir-row' }, dirLabel, pickDir)),
+      row('Fayl uzatishda', pace.el),
+      h('div', { class: 'set-hint' }, 'Ping past: fayl uzatilayotganda terminal va ping sekinlashmaydi, uzatish biroz sekinroq bo‘lishi mumkin. Maksimal tezlik: fayl eng tez uzatiladi, lekin ping va terminal kechikadi.'),
+    ),
     h(
       'div',
       { class: 'set-group' },
@@ -95,6 +173,7 @@ export async function openSettings(app) {
       row('Claude buyrug‘i', cmdInput('claudeCmd', 'claude')),
       row('agy buyrug‘i', cmdInput('agyCmd', 'agy')),
     ),
+    h('div', { class: 'set-group' }, h('div', { class: 'set-title' }, 'Yangilanish'), updates.el, h('div', { class: 'set-row' }, h('div', { class: 'set-label muted' }, `Hozirgi versiya: ${app.info.version}`), checkNow)),
     h(
       'div',
       { class: 'set-about' },
@@ -104,5 +183,5 @@ export async function openSettings(app) {
     ),
   );
 
-  await modal({ title: 'Sozlamalar', width: 500, body }).promise;
+  await modal({ title: 'Sozlamalar', width: 520, body: content }).promise;
 }
