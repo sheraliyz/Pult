@@ -11,6 +11,8 @@ const TABS = [
   ['docker', 'box', 'Docker'],
   ['logs', 'logs', 'Loglar'],
   ['disk', 'disk', 'Disk'],
+  ['security', 'shield', 'Xavfsizlik'],
+  ['updates', 'download', 'Yangilanishlar'],
 ];
 
 const pct = (part, whole) => (whole > 0 ? Math.round((part / whole) * 100) : 0);
@@ -78,6 +80,8 @@ export class SystemView {
       docker: new DockerPane(this),
       logs: new LogsPane(this),
       disk: new DiskPane(this),
+      security: new SecurityPane(this),
+      updates: new UpdatesPane(this),
     };
   }
 
@@ -879,5 +883,494 @@ class DiskPane {
       toast(err.message, 'err');
     }
     if (this.dir === dir) this.renderBig();
+  }
+}
+
+/* ---------------- a long job's live output (apt; see jobStart in system.js) ---------------- */
+
+/** Follows ~/.pult/jobs/<id>.log until its "PULT_EXIT=<code>" line. */
+class JobConsole {
+  constructor(view, { title, onDone }) {
+    wire();
+    this.view = view;
+    this.onDone = onDone;
+    this.titleEl = h('span', { class: 'jc-title' }, title || 'Jarayon');
+    this.state = h('span', { class: 'jc-state' });
+    this.screen = h('div', { class: 'sy-log wrap jc-screen' });
+    this.el = h('div', { class: 'jc' }, h('div', { class: 'jc-head' }, this.titleEl, h('div', { class: 'grow' }), this.state), h('div', { class: 'sy-log-wrap jc-wrap' }, this.screen));
+    this.partial = '';
+    this.done = false;
+  }
+
+  async follow(log, title) {
+    if (title) this.titleEl.textContent = title;
+    this.stop();
+    this.log = log;
+    this.done = false;
+    this.partial = '';
+    clear(this.screen);
+    this.setState('ishlayapti…');
+    try {
+      const id = await call('logs:open', this.view.connId, { kind: 'job', path: log });
+      this.streamId = id;
+      streams.set(id, {
+        data: (text) => this.data(text),
+        // The link dropped: the job goes on on the server; follow it again when back.
+        end: () => {
+          this.streamId = null;
+          if (!this.done) this.setState('aloqa uzildi — jarayon serverda davom etmoqda');
+        },
+      });
+    } catch (err) {
+      this.setState(err.message, 'bad');
+    }
+  }
+
+  data(text) {
+    const parts = (this.partial + text.replace(/\r/g, '\n')).split('\n');
+    this.partial = parts.pop();
+    const follow = this.screen.scrollHeight - this.screen.scrollTop - this.screen.clientHeight < 40;
+    for (const line of parts) {
+      const end = line.match(/^PULT_EXIT=(\d+)$/);
+      if (end) {
+        this.finish(Number(end[1]));
+        continue;
+      }
+      if (!line.trim()) continue;
+      const cls = /^(E:|Err:|dpkg: error)/.test(line) ? 'err' : /^W:/.test(line) ? 'warn' : '';
+      this.screen.append(h('div', { class: `sy-line ${cls}` }, line));
+    }
+    if (follow) this.screen.scrollTop = this.screen.scrollHeight;
+  }
+
+  finish(code) {
+    this.done = true;
+    this.stop();
+    this.setState(code === 0 ? 'tugadi' : `xato bilan tugadi (kod ${code})`, code === 0 ? 'ok' : 'bad');
+    this.onDone?.(code);
+  }
+
+  setState(text, tone = '') {
+    clear(this.state, h('span', { class: `sy-live-dot ${tone === 'ok' ? 'off' : tone === 'bad' ? 'bad' : ''}` }), text);
+  }
+
+  stop() {
+    if (this.streamId) {
+      streams.delete(this.streamId);
+      call('logs:close', this.streamId).catch(() => {});
+      this.streamId = null;
+    }
+  }
+}
+
+/* ---------------- security check ---------------- */
+
+const AUTH_LABEL = { password: 'parol', publickey: 'kalit', 'keyboard-interactive': 'parol' };
+
+class SecurityPane {
+  constructor(view) {
+    this.view = view;
+    this.data = null;
+    this.busy = null; // a fix in progress
+    this.summary = h('div', { class: 'sy-summary' });
+    this.list = h('div', { class: 'sy-scroll sec-list' });
+    this.job = new JobConsole(view, { onDone: () => setTimeout(() => this.load(), 800) });
+    this.job.el.hidden = true;
+    this.el = h(
+      'div',
+      { class: 'sy-pane' },
+      h('div', { class: 'sy-bar' }, h('div', { class: 'sec-os' }), this.summary, h('div', { class: 'grow' }), miniKey('refresh', 'Qayta tekshirish', () => this.load(), { cls: 'key-gray' })),
+      this.job.el,
+      this.list,
+    );
+  }
+
+  show() {
+    if (!this.data && !this.loading) this.load();
+  }
+
+  onReady() {
+    if (this.job.log && !this.job.done && !this.job.streamId) this.job.follow(this.job.log);
+    if (!this.data) this.load();
+  }
+
+  async load() {
+    if (!this.view.ready) {
+      clear(this.list, emptyState('alert', 'Server bilan aloqa yo‘q', null));
+      return;
+    }
+    this.loading = true;
+    if (!this.data) clear(this.list, loading('Server tekshirilmoqda…'));
+    try {
+      this.data = await call('sys:security', this.view.connId);
+      this.render();
+    } catch (err) {
+      clear(this.list, emptyState('alert', 'Tekshirib bo‘lmadi', err.message));
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  /** The facts from the server → checks: { tone: bad|warn|ok|info, title, text, details, actions }. */
+  checks() {
+    const d = this.data;
+    const out = [];
+    const viaPassword = d.auth === 'password';
+    const keysOnlyTip = viaPassword ? 'Pult bu serverga parol bilan ulangan: avval kalit bilan ulanishni sozlang (Server sozlamalari)' : null;
+    const canRoot = d.root || d.sudo;
+    const undo = d.pultDropin && { label: 'Pult o‘zgartirishini bekor qilish', fix: 'ssh-undo', plain: true };
+
+    if (!d.sshd) {
+      out.push({ tone: 'info', title: 'SSH sozlamalari', text: canRoot ? 'sshd sozlamasini o‘qib bo‘lmadi.' : 'Ko‘rish uchun root yoki parolsiz sudo kerak.' });
+    } else {
+      const pw = d.sshd.passwordauthentication;
+      out.push(
+        pw === 'no'
+          ? { tone: 'ok', title: 'SSH: parol bilan kirish o‘chirilgan', text: 'Serverga faqat SSH kalit bilan kiriladi — parolni taxmin qilish befoyda.', actions: [undo].filter(Boolean) }
+          : {
+              tone: 'warn',
+              title: 'SSH: parol bilan kirish yoqilgan',
+              text: 'Botlar parolni taxmin qilishga urinadi. SSH kalit bilan kirish ancha xavfsiz.',
+              actions: [{ label: 'Parol bilan kirishni o‘chirish', fix: 'ssh-password-off', disabled: viaPassword || !canRoot, tip: keysOnlyTip || (!canRoot ? 'root yoki parolsiz sudo kerak' : null) }, undo].filter(Boolean),
+            },
+      );
+      const root = d.sshd.permitrootlogin;
+      out.push(
+        root === 'yes'
+          ? {
+              tone: pw === 'no' ? 'warn' : 'bad',
+              title: 'SSH: root parol bilan ham kira oladi',
+              text: 'root — hujumchilar birinchi urinadigan foydalanuvchi. Uni faqat kalit bilan qoldirish tavsiya etiladi.',
+              actions: [{ label: 'root’ga faqat kalit bilan', fix: 'ssh-root-keys', disabled: viaPassword || !canRoot, tip: keysOnlyTip || (!canRoot ? 'root yoki parolsiz sudo kerak' : null) }],
+            }
+          : { tone: 'ok', title: root === 'no' ? 'SSH: root kira olmaydi' : 'SSH: root faqat kalit bilan kiradi', text: `PermitRootLogin ${root}` },
+      );
+      if (d.sshd.permitemptypasswords === 'yes') out.push({ tone: 'bad', title: 'SSH: bo‘sh parol bilan kirish mumkin', text: 'PermitEmptyPasswords yes — darhol o‘chirish kerak.' });
+    }
+
+    if (!d.f2b.installed) {
+      out.push({ tone: 'warn', title: 'Fail2ban o‘rnatilmagan', text: 'Fail2ban parolni taxmin qilayotgan IP manzillarni avtomatik bloklaydi.', actions: [{ label: 'O‘rnatish', job: 'fail2ban', disabled: !canRoot, tip: !canRoot ? 'root yoki parolsiz sudo kerak' : null }] });
+    } else if (!d.f2b.active) {
+      out.push({ tone: 'bad', title: 'Fail2ban to‘xtagan', text: 'O‘rnatilgan, lekin ishlamayapti.', actions: [{ label: 'Ishga tushirish', service: 'fail2ban.service' }] });
+    } else {
+      out.push({ tone: 'ok', title: 'Fail2ban ishlayapti', text: `Hozir ${d.f2b.banned} ta IP bloklangan, jami ${d.f2b.totalBanned} ta bloklangan.` });
+    }
+
+    const f = d.fails;
+    if (f.total > 0) {
+      out.push({
+        tone: d.f2b.active ? 'info' : 'warn',
+        title: `Kirishga urinishlar (24 soat): ${f.total.toLocaleString('ru-RU')} ta`,
+        text: d.f2b.active ? 'Ko‘pchiligi botlar; fail2ban ularni bloklayapti.' : 'Bularning hammasi muvaffaqiyatsiz urinishlar. Fail2ban va kalit bilan kirish ularni befoyda qiladi.',
+        details: h(
+          'div',
+          { class: 'sec-cols' },
+          h('div', null, h('div', { class: 'sec-sub' }, 'Eng ko‘p uringan IP manzillar'), f.byIp.map((x) => h('div', { class: 'sec-kv mono' }, h('span', null, x.ip), h('b', null, x.n.toLocaleString('ru-RU'))))),
+          h('div', null, h('div', { class: 'sec-sub' }, 'Taxmin qilingan foydalanuvchilar'), f.byUser.map((x) => h('div', { class: 'sec-kv mono' }, h('span', null, x.user), h('b', null, x.n.toLocaleString('ru-RU'))))),
+        ),
+      });
+    } else if (f.source) {
+      out.push({ tone: 'ok', title: 'Kirishga urinishlar (24 soat): yo‘q', text: 'SSH jurnalida muvaffaqiyatsiz kirish topilmadi.' });
+    }
+
+    if (d.logins.length) {
+      out.push({
+        tone: 'info',
+        title: 'So‘nggi muvaffaqiyatli kirishlar',
+        text: 'Tanimagan IP manzil bo‘lsa — darhol parol va kalitlarni almashtiring.',
+        details: h(
+          'div',
+          { class: 'sec-logins' },
+          d.logins.slice(0, 8).map((x) => h('div', { class: 'sec-kv' }, h('span', { class: 'mono' }, x.ip), h('span', null, `${x.user} · ${AUTH_LABEL[x.method] || x.method}`), h('span', { class: 'sy-meta' }, x.t ? fmt.ago(x.t) : ''))),
+        ),
+      });
+    }
+
+    const pub = d.listen.filter((x) => x.scope === 'public');
+    const risky = pub.filter((x) => x.risk);
+    out.push({
+      tone: risky.length ? 'bad' : 'info',
+      title: risky.length ? `Internetga ochiq xavfli port: ${risky.map((x) => x.port).join(', ')}` : `Internetga ochiq portlar: ${pub.length} ta`,
+      text: risky.length
+        ? `${risky.map((x) => `${x.port} — ${x.risk}`).join('; ')}. Bunday xizmatlar faqat 127.0.0.1 da tinglashi yoki firewall bilan yopilishi kerak.`
+        : 'Har biri kerakligini tekshiring: kerakmasini o‘chiring yoki faqat 127.0.0.1 da tinglaydigan qiling.',
+      details: h(
+        'div',
+        { class: 'sec-ports' },
+        pub.map((x) => h('span', { class: `sec-port ${x.risk ? 'bad' : ''}`, 'data-tip': `${x.proto} · ${x.addr}` }, h('b', { class: 'mono' }, String(x.port)), x.proc || x.proto)),
+      ),
+    });
+
+    if (d.ufw?.active) out.push({ tone: 'ok', title: 'Firewall (UFW) yoqilgan', text: `${d.ufw.rules} ta qoida.` });
+    else if (d.ufw) out.push({ tone: 'warn', title: 'Firewall (UFW) o‘rnatilgan, lekin o‘chiq', text: 'Yoqishdan oldin SSH portiga ruxsat bering, aks holda ulanib bo‘lmay qoladi: ufw allow OpenSSH && ufw enable' });
+    else if ((d.nftDrops || 0) > 0 || (d.iptablesPolicy && d.iptablesPolicy !== 'ACCEPT')) out.push({ tone: 'ok', title: 'Firewall qoidalari bor', text: 'nftables/iptables ichida bloklovchi qoidalar topildi.' });
+    else out.push({ tone: 'warn', title: 'Firewall yo‘q', text: 'Serverda ochilgan har qanday port darhol internetga ham ochiq bo‘ladi.' });
+
+    if (d.updates) {
+      out.push(
+        d.updates.security > 0
+          ? { tone: 'warn', title: `Xavfsizlik yangilanishlari: ${d.updates.security} ta`, text: `Jami ${d.updates.total} ta paket yangilanishi kutyapti.`, actions: [{ label: 'Yangilanishlarga o‘tish', tab: 'updates' }] }
+          : { tone: 'ok', title: 'Xavfsizlik yangilanishlari o‘rnatilgan', text: d.updates.total ? `${d.updates.total} ta oddiy yangilanish bor.` : 'Hamma paketlar yangi.' },
+      );
+      out.push(
+        d.auto.enabled
+          ? { tone: 'ok', title: 'Avtomatik xavfsizlik yangilanishlari yoqilgan', text: 'unattended-upgrades xavfsizlik yangilanishlarini o‘zi o‘rnatadi.' }
+          : { tone: 'warn', title: 'Avtomatik xavfsizlik yangilanishlari o‘chiq', text: 'Yoqilsa, xavfsizlik tuzatishlari har kuni o‘zi o‘rnatiladi.', actions: [{ label: 'Yoqish', job: 'auto-updates', disabled: !canRoot, tip: !canRoot ? 'root yoki parolsiz sudo kerak' : null }] },
+      );
+    }
+    if (d.reboot.required) out.push({ tone: 'warn', title: 'Qayta yuklash kerak', text: `Yangilangan: ${d.reboot.pkgs.join(', ') || 'yadro'}. Yangi yadro qayta yuklangandan keyin ishlaydi.`, actions: [{ label: 'Yangilanishlarga o‘tish', tab: 'updates' }] });
+    const extraRoot = d.uid0.filter((u) => u !== 'root');
+    if (extraRoot.length) out.push({ tone: 'bad', title: `root huquqli boshqa foydalanuvchi: ${extraRoot.join(', ')}`, text: 'UID 0 — root bilan bir xil huquq. O‘zingiz yaratmagan bo‘lsangiz, bu xavfli belgi.' });
+    if (d.emptyPw?.length) out.push({ tone: 'bad', title: `Parolsiz foydalanuvchi: ${d.emptyPw.join(', ')}`, text: 'Bu foydalanuvchilarga parol qo‘ying yoki ularni qulflang (passwd -l).' });
+    const order = { bad: 0, warn: 1, info: 2, ok: 3 };
+    return out.sort((a, b) => order[a.tone] - order[b.tone]);
+  }
+
+  render() {
+    const d = this.data;
+    this.el.querySelector('.sec-os').textContent = d.os;
+    const checks = this.checks();
+    const n = (t) => checks.filter((c) => c.tone === t).length;
+    clear(
+      this.summary,
+      n('bad') ? h('span', { class: 'sy-bad' }, icon('alert', 14), `${n('bad')} ta muammo`) : null,
+      n('warn') ? h('span', { class: 'sec-warn' }, `${n('warn')} ta ogohlantirish`) : null,
+      n('ok') ? h('span', null, `${n('ok')} ta joyida`) : null,
+    );
+    clear(this.list, checks.map((c) => this.card(c)));
+  }
+
+  card(c) {
+    const mark = { bad: 'x', warn: 'alert', ok: 'check', info: 'info' }[c.tone];
+    return h(
+      'div',
+      { class: `sec-card ${c.tone}` },
+      h('div', { class: `sec-ic ${c.tone}` }, icon(mark, 15)),
+      h(
+        'div',
+        { class: 'sec-main' },
+        h('div', { class: 'sec-title' }, c.title),
+        c.text && h('div', { class: 'sec-text' }, c.text),
+        c.details,
+        c.actions?.length > 0 &&
+          h(
+            'div',
+            { class: 'sec-actions' },
+            c.actions.map((a) =>
+              h(
+                'button',
+                {
+                  class: `key key-sm ${a.plain ? 'key-gray' : a.tab ? '' : 'key-signal'}`,
+                  type: 'button',
+                  disabled: a.disabled || this.busy === (a.fix || a.job),
+                  'data-tip': a.tip,
+                  onclick: () => this.act(a),
+                },
+                this.busy && this.busy === (a.fix || a.job) ? h('span', { class: 'spinner' }) : null,
+                a.label,
+              ),
+            ),
+          ),
+      ),
+    );
+  }
+
+  async act(a) {
+    if (a.tab) return this.view.show(a.tab);
+    if (a.service) {
+      try {
+        await call('sys:service', this.view.connId, a.service, 'start');
+        toast('Ishga tushdi', 'ok');
+      } catch (err) {
+        toast(err.message, 'err', 6000);
+      }
+      return this.load();
+    }
+    if (a.job) {
+      const ok = await confirmDialog({
+        title: a.job === 'fail2ban' ? 'Fail2ban o‘rnatilsinmi?' : 'Avtomatik yangilanishlar yoqilsinmi?',
+        message: 'Paket apt orqali o‘rnatiladi. Jarayon serverda alohida ishlaydi: aloqa uzilsa ham to‘xtamaydi.',
+        confirm: a.job === 'fail2ban' ? 'O‘rnatish' : 'Yoqish',
+      });
+      if (!ok) return;
+      try {
+        const job = await call('sys:job', this.view.connId, a.job, []);
+        this.job.el.hidden = false;
+        this.job.follow(job.log, a.job === 'fail2ban' ? 'Fail2ban o‘rnatilmoqda' : 'Avtomatik yangilanishlar yoqilmoqda');
+      } catch (err) {
+        toast(err.message, 'err', 6000);
+      }
+      return;
+    }
+    const texts = {
+      'ssh-password-off': {
+        title: 'Parol bilan kirish o‘chirilsinmi?',
+        message: 'Shundan keyin serverga faqat SSH kalit bilan kiriladi — bu serverga parol bilan kiradigan boshqa foydalanuvchilar ham kira olmay qoladi. Pult o‘zi kalit bilan ulangan, joriy ulanishlar uzilmaydi. Sozlama /etc/ssh/sshd_config.d/01-pult.conf faylida, “bekor qilish” bilan qaytariladi.',
+        confirm: 'O‘chirish',
+      },
+      'ssh-root-keys': {
+        title: 'root faqat kalit bilan kirsinmi?',
+        message: 'root parol bilan kira olmaydi, kalit bilan esa kiradi. Joriy ulanishlar uzilmaydi. Sozlama /etc/ssh/sshd_config.d/01-pult.conf faylida, “bekor qilish” bilan qaytariladi.',
+        confirm: 'Qo‘llash',
+      },
+      'ssh-undo': { title: 'Pult o‘zgartirishi bekor qilinsinmi?', message: 'SSH sozlamasi Pult o‘zgartirishidan oldingi holiga qaytadi.', confirm: 'Bekor qilish' },
+    }[a.fix];
+    if (!(await confirmDialog({ ...texts, danger: a.fix !== 'ssh-undo' }))) return;
+    this.busy = a.fix;
+    this.render();
+    try {
+      await call('sys:securityFix', this.view.connId, a.fix);
+      toast('Qo‘llandi — SSH sozlamasi qayta yuklandi', 'ok');
+    } catch (err) {
+      toast(err.message, 'err', 8000);
+    } finally {
+      this.busy = null;
+    }
+    await this.load();
+  }
+}
+
+/* ---------------- package updates (apt) ---------------- */
+
+class UpdatesPane {
+  constructor(view) {
+    this.view = view;
+    this.data = null;
+    this.running = false;
+    this.osEl = h('div', { class: 'sec-os' });
+    this.stamp = h('div', { class: 'sy-meta' });
+    this.top = h('div', { class: 'up-top' });
+    this.list = h('div', { class: 'up-list' });
+    this.job = new JobConsole(view, { onDone: (code) => this.jobDone(code) });
+    this.job.el.hidden = true;
+    this.el = h(
+      'div',
+      { class: 'sy-pane' },
+      h('div', { class: 'sy-bar' }, this.osEl, this.stamp, h('div', { class: 'grow' }), miniKey('refresh', 'Ro‘yxatni yangilash', () => this.start('apt-update'), { cls: 'key-gray', tip: 'apt-get update: yangi versiyalar haqidagi ma’lumotni yuklash' })),
+      h('div', { class: 'sy-scroll up-body' }, this.top, this.job.el, this.list),
+    );
+  }
+
+  show() {
+    if (!this.data && !this.loading) this.load();
+  }
+
+  onReady() {
+    this.load(); // after a reboot: fresh state; a job that ran meanwhile shows its end
+  }
+
+  async load() {
+    if (!this.view.ready) return;
+    this.loading = true;
+    if (!this.data) clear(this.list, loading('Yangilanishlar tekshirilmoqda…'));
+    try {
+      this.data = await call('sys:updates', this.view.connId);
+      this.render();
+      // A job still running (Pult was closed, or the link dropped while we watched): follow it
+      // again — from the start of its log, so a job that ended meanwhile shows its end too.
+      const j = this.data.job;
+      if (j && !this.job.streamId && !this.job.done && (this.running || !j.done)) {
+        this.running = true;
+        this.job.el.hidden = false;
+        this.job.follow(j.log, 'Davom etayotgan jarayon');
+        this.render();
+      }
+    } catch (err) {
+      clear(this.list, emptyState('alert', 'Tekshirib bo‘lmadi', err.message));
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  render() {
+    const d = this.data;
+    if (!d.apt) {
+      this.osEl.textContent = d.os;
+      clear(this.top);
+      clear(this.list, emptyState('download', 'Bu serverda apt yo‘q', 'Hozircha faqat Debian va Ubuntu (apt) qo‘llab-quvvatlanadi.'));
+      return;
+    }
+    this.osEl.textContent = d.os;
+    this.stamp.textContent = d.checkedAt ? `ro‘yxat ${fmt.ago(d.checkedAt)} yangilangan` : '';
+    const sec = d.items.filter((x) => x.security);
+    const block = this.running || !d.canRoot;
+    const why = !d.canRoot ? 'root yoki parolsiz sudo kerak' : this.running ? 'jarayon tugashini kuting' : null;
+    clear(
+      this.top,
+      d.reboot.required &&
+        h(
+          'div',
+          { class: 'up-reboot' },
+          icon('alert', 16),
+          h('div', { class: 'grow' }, h('b', null, 'Qayta yuklash kerak.'), ` Yangi yadro va kutubxonalar (${d.reboot.pkgs.slice(0, 3).join(', ') || 'yadro'}) qayta yuklangandan keyin ishlaydi.`),
+          h('button', { class: 'key key-sm key-danger', type: 'button', disabled: block, 'data-tip': why, onclick: () => this.reboot() }, icon('power', 14), 'Qayta yuklash'),
+        ),
+      d.items.length
+        ? h(
+            'div',
+            { class: 'up-summary' },
+            h('div', { class: 'up-count' }, h('b', { class: 'mono' }, String(d.items.length)), ' ta yangilanish', sec.length ? h('span', { class: 'up-sec' }, ` · ${sec.length} tasi xavfsizlik`) : null),
+            h('div', { class: 'grow' }),
+            sec.length > 0 && h('button', { class: 'key key-sm key-signal', type: 'button', disabled: block, 'data-tip': why, onclick: () => this.start('apt-install', sec.map((x) => x.name)) }, icon('shield', 14), `Xavfsizliklarini o‘rnatish (${sec.length})`),
+            h('button', { class: 'key key-sm', type: 'button', disabled: block, 'data-tip': why, onclick: () => this.start('apt-upgrade') }, icon('download', 14), `Hammasini o‘rnatish (${d.items.length})`),
+          )
+        : h('div', { class: 'up-fresh' }, icon('check', 18), h('b', null, 'Hammasi yangi'), h('span', { class: 'sy-meta' }, ' — o‘rnatiladigan yangilanish yo‘q.')),
+    );
+    clear(
+      this.list,
+      d.items.map((x) =>
+        h(
+          'div',
+          { class: 'up-row' },
+          h('span', { class: 'up-name mono' }, x.name),
+          x.security ? h('span', { class: 'sy-badge bad' }, 'xavfsizlik') : h('span', { class: 'sy-badge' }, x.suites.split(',')[0]),
+          h('span', { class: 'up-ver mono', 'data-tip': `${x.from} → ${x.to}` }, h('span', { class: 'up-from' }, x.from), ' → ', h('b', null, x.to)),
+          h('button', { class: 'key key-sm', type: 'button', disabled: block, 'data-tip': why, onclick: () => this.start('apt-install', [x.name]) }, 'O‘rnatish'),
+        ),
+      ),
+    );
+  }
+
+  async start(kind, pkgs = []) {
+    if (kind !== 'apt-update') {
+      const what = kind === 'apt-upgrade' ? `${this.data.items.length} ta paket` : pkgs.length === 1 ? pkgs[0] : `${pkgs.length} ta paket`;
+      const ok = await confirmDialog({
+        title: `${what} yangilansinmi?`,
+        message: 'Yangilanayotgan dasturlar (masalan, nginx yoki Docker) bir necha soniya qayta ishga tushishi mumkin. Jarayon serverda alohida ishlaydi: aloqa uzilsa yoki Pult yopilsa ham to‘xtamaydi.',
+        confirm: 'Yangilash',
+      });
+      if (!ok) return;
+    }
+    try {
+      const job = await call('sys:job', this.view.connId, kind, pkgs);
+      this.running = true;
+      this.job.el.hidden = false;
+      this.job.follow(job.log, kind === 'apt-update' ? 'Ro‘yxat yangilanmoqda (apt-get update)' : 'Paketlar yangilanmoqda');
+      this.render();
+    } catch (err) {
+      toast(err.message, 'err', 6000);
+    }
+  }
+
+  jobDone(code) {
+    this.running = false;
+    toast(code === 0 ? 'Tayyor' : 'Jarayon xato bilan tugadi — logni ko‘ring', code === 0 ? 'ok' : 'err', 5000);
+    setTimeout(() => this.load(), 600);
+  }
+
+  async reboot() {
+    const ok = await confirmDialog({
+      title: 'Server qayta yuklansinmi?',
+      message: 'Server 1–2 daqiqa ishlamaydi. Terminallardagi ishlar (tmux sessiyalari) va ishlab turgan dasturlar to‘xtaydi. Pult server qaytishi bilan o‘zi qayta ulanadi.',
+      confirm: 'Qayta yuklash',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await call('sys:reboot', this.view.connId);
+      toast('Server qayta yuklanmoqda…', 'info', 6000);
+    } catch (err) {
+      toast(err.message, 'err', 6000);
+    }
   }
 }

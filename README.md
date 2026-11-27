@@ -59,9 +59,10 @@ terminaldagi dasturlar ishlashda davom etadi.
 Kod ranglari (shell, Python, JS/TS, JSON, YAML, Docker, nginx, SQL, PHP, Go, Rust, Markdown, `.env` va boshqalar),
 qidirish va almashtirish, qatorga o‘tish, qatorlarni o‘rash. `CRLF`/`LF` saqlanadi.
 
-## Tizim: xizmatlar, Docker, loglar, disk
+## Tizim: xizmatlar, Docker, loglar, disk, xavfsizlik
 
-Chap paneldagi **Tizim** (`Ctrl+Shift+4`): serverni terminalsiz boshqarish.
+Chap paneldagi **Tizim** (`Ctrl+Shift+4`): serverni terminalsiz boshqarish — xizmatlar, Docker, loglar, disk,
+xavfsizlik va paket yangilanishlari.
 
 - **Xizmatlar (systemd).** Hamma xizmatlar holati bilan, xatodagilari tepada. Bir bosishda ishga tushirish,
   to‘xtatish, qayta ishga tushirish va loglari. SSH xizmatini to‘xtatishdan oldin alohida ogohlantiradi.
@@ -81,6 +82,24 @@ Chap paneldagi **Tizim** (`Ctrl+Shift+4`): serverni terminalsiz boshqarish.
   100 MB dan katta fayllarni topadi va Fayllarda ko‘rsatadi.
 
   ![Disk](docs/system-disk.png)
+
+- **Xavfsizlik.** Serverni bir qarashda tekshiradi: SSH’da parol va root bilan kirish, fail2ban, so‘nggi 24 soatdagi
+  kirishga urinishlar (qaysi IP’lardan, qaysi foydalanuvchi nomlari bilan), so‘nggi muvaffaqiyatli kirishlar,
+  internetga ochiq portlar (ochiq qolgan Redis, MySQL, PostgreSQL kabi xavfli xizmatlar qizil rangda), firewall,
+  kutayotgan xavfsizlik yangilanishlari. Ko‘p muammo bir bosishda tuzatiladi: fail2ban o‘rnatish, avtomatik xavfsizlik
+  yangilanishlarini yoqish, SSH’da parolni o‘chirish, root’ni faqat kalit bilan qoldirish. SSH sozlamasi alohida faylda
+  (`/etc/ssh/sshd_config.d/01-pult.conf`) saqlanadi, `sshd -t` tekshiruvidan o‘tmasa qo‘llanmaydi va bir bosishda
+  bekor qilinadi. Pult serverga parol bilan ulangan bo‘lsa, bu ikki SSH tuzatishi o‘chiq turadi: aks holda serverga
+  kira olmay qolishingiz mumkin.
+
+  ![Xavfsizlik](docs/security.png)
+
+- **Yangilanishlar (apt).** Nechta paket yangilanishi kutayotgani va ulardan qaysilari xavfsizlikka tegishli.
+  Faqat xavfsizlik yangilanishlarini yoki hammasini bir bosishda o‘rnatasiz, jarayon jonli log bilan ko‘rinadi.
+  U serverda alohida ishlaydi: aloqa uzilsa yoki Pult yopilsa ham paketlar yarim yo‘lda qolmaydi, qaytib ulanganda
+  Pult jarayonni yana ko‘rsatadi. Yadro yangilangan bo‘lsa, serverni shu yerning o‘zidan qayta yuklaysiz.
+
+  ![Yangilanishlar](docs/updates.png)
 
 - **Ogohlantirish.** Disk 90% dan oshsa yoki RAM bir daqiqa davomida deyarli to‘lsa, Windows bildirishnomasi chiqadi.
   Bosganingizda kerakli oyna ochiladi.
@@ -170,7 +189,8 @@ qayerdasiz, **kulrang** — yordamchi tugmalar. Terminal har doim qora ekranda. 
 - `tmux` — sessiyalar saqlanishi uchun. Bo‘lmasa ham ishlaydi, faqat uzilganda sessiya saqlanmaydi.
 - Fayl amallari uchun oddiy Linux buyruqlari: `cp`, `mv`, `tar`, `find`, `grep`, `du`, `stat`. `.zip` uchun `zip`/`unzip`
   yoki `python3` kerak: topilmasa, Pult buni aniq aytadi.
-- **Tizim** bo‘limi uchun: `systemctl`, `journalctl`, `docker`, `df`, `du` (qaysi biri bo‘lsa, o‘sha qismi ishlaydi).
+- **Tizim** bo‘limi uchun: `systemctl`, `journalctl`, `docker`, `df`, `du`, `ss`, `sshd` (qaysi biri bo‘lsa, o‘sha
+  qismi ishlaydi). Yangilanishlar hozircha faqat `apt` bilan (Debian, Ubuntu).
 
 ## Ishlab chiqish
 

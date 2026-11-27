@@ -553,6 +553,117 @@ function runReal(stream, cmd) {
   });
 }
 
+/* ---------------- security check and apt updates ---------------- */
+
+const MOCK_SEC = { password: 'yes', root: 'yes', dropin: false, f2b: false, auto: false, reboot: true };
+
+let MOCK_UPGRADABLE = [
+  'openssl/jammy-updates,jammy-security 3.0.2-0ubuntu1.18 amd64 [upgradable from: 3.0.2-0ubuntu1.17]',
+  'libssl3/jammy-updates,jammy-security 3.0.2-0ubuntu1.18 amd64 [upgradable from: 3.0.2-0ubuntu1.17]',
+  'linux-image-generic/jammy-updates,jammy-security 5.15.0.131.130 amd64 [upgradable from: 5.15.0.130.129]',
+  'linux-headers-generic/jammy-updates,jammy-security 5.15.0.131.130 amd64 [upgradable from: 5.15.0.130.129]',
+  'sudo/jammy-updates,jammy-security 1.9.9-1ubuntu2.5 amd64 [upgradable from: 1.9.9-1ubuntu2.4]',
+  'curl/jammy-updates,jammy-security 7.81.0-1ubuntu1.20 amd64 [upgradable from: 7.81.0-1ubuntu1.19]',
+  'libcurl4/jammy-updates,jammy-security 7.81.0-1ubuntu1.20 amd64 [upgradable from: 7.81.0-1ubuntu1.19]',
+  'docker-ce/jammy 5:27.3.1-1~ubuntu.22.04~jammy amd64 [upgradable from: 5:27.2.0-1~ubuntu.22.04~jammy]',
+  'docker-ce-cli/jammy 5:27.3.1-1~ubuntu.22.04~jammy amd64 [upgradable from: 5:27.2.0-1~ubuntu.22.04~jammy]',
+  'nginx/jammy-updates 1.18.0-6ubuntu14.6 all [upgradable from: 1.18.0-6ubuntu14.5]',
+  'python3-requests/jammy-updates 2.25.1+dfsg-2ubuntu0.2 all [upgradable from: 2.25.1+dfsg-2ubuntu0.1]',
+  'snapd/jammy-updates 2.66.1+22.04 amd64 [upgradable from: 2.65.3+22.04]',
+];
+
+function mockSecurity() {
+  const sec = MOCK_UPGRADABLE.filter((l) => l.includes('-security')).length;
+  return [
+    '@@OS', 'Ubuntu 22.04.5 LTS',
+    '@@WHO', 'demo', '1000', 'SUDO',
+    '@@LISTEN',
+    'tcp LISTEN 0 4096 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=700,fd=3))',
+    'tcp LISTEN 0 4096 [::]:22 [::]:* users:(("sshd",pid=700,fd=4))',
+    'tcp LISTEN 0 511 0.0.0.0:80 0.0.0.0:* users:(("nginx",pid=900,fd=6))',
+    'tcp LISTEN 0 511 0.0.0.0:443 0.0.0.0:* users:(("nginx",pid=900,fd=7))',
+    'tcp LISTEN 0 4096 0.0.0.0:6379 0.0.0.0:* users:(("redis-server",pid=1100,fd=6))',
+    'tcp LISTEN 0 4096 0.0.0.0:8080 0.0.0.0:* users:(("docker-proxy",pid=2200,fd=4))',
+    'tcp LISTEN 0 244 127.0.0.1:5432 0.0.0.0:* users:(("postgres",pid=1203,fd=6))',
+    'udp UNCONN 0 0 127.0.0.53%lo:53 0.0.0.0:* users:(("systemd-resolve",pid=600,fd=13))',
+    '@@UFW', 'Status: inactive',
+    '@@NFT', '0',
+    '@@IPT', '-P INPUT ACCEPT',
+    '@@SSHD', 'port 22', `permitrootlogin ${MOCK_SEC.root}`, `passwordauthentication ${MOCK_SEC.password}`, 'pubkeyauthentication yes', 'permitemptypasswords no', 'kbdinteractiveauthentication no', 'maxauthtries 6',
+    '@@SSHDINC', 'INCLUDE', ...(MOCK_SEC.dropin ? ['PULT_DROPIN'] : []),
+    '@@F2B', ...(MOCK_SEC.f2b ? ['INSTALLED', 'active', '|- Currently failed:\t3', '|- Total failed:\t214', '   |- Currently banned:\t4', '   |- Total banned:\t57'] : ['NO_F2B']),
+    '@@FAILS', 'SRC journal',
+    '   1842 F root 45.148.10.183', '    611 I admin 183.81.169.238', '    604 F admin 183.81.169.238', '    377 F root 218.92.0.112',
+    '    120 I ubuntu 103.157.25.60', '     98 I oracle 92.255.85.37', '     41 F root 80.94.95.115',
+    '@@OK',
+    '2026-11-26T21:03:11+0500 acme-prod sshd[4121]: Accepted publickey for demo from 84.54.70.12 port 51234 ssh2: ED25519 SHA256:x',
+    '2026-11-27T08:40:52+0500 acme-prod sshd[5120]: Accepted password for root from 84.54.70.12 port 50122 ssh2',
+    '2026-11-27T09:12:05+0500 acme-prod sshd[5301]: Accepted publickey for demo from 84.54.70.12 port 52310 ssh2: ED25519 SHA256:x',
+    '@@UPD', String(MOCK_UPGRADABLE.length), String(sec),
+    '@@AUTO', MOCK_SEC.auto ? 'enabled' : 'disabled',
+    '@@REBOOT', ...(MOCK_SEC.reboot ? ['YES', 'linux-image-5.15.0-131-generic', 'linux-base'] : []),
+    '@@UID0', 'root',
+    '@@EMPTY', 'DONE',
+    '@@END',
+  ].join('\n') + '\n';
+}
+
+let MOCK_JOB = null; // remote path of the last job log
+
+function mockUpdates() {
+  const job = MOCK_JOB ? [MOCK_JOB, ...(fs.readFileSync(local(MOCK_JOB), 'utf8').match(/^PULT_EXIT=\d+$/m) || [])] : [];
+  return [
+    '@@OS', 'Ubuntu 22.04.5 LTS',
+    '@@STAMP', String(Math.floor(Date.now() / 1000) - 3 * 3600 - 600),
+    '@@LIST', 'Listing...', ...MOCK_UPGRADABLE,
+    '@@REBOOT', ...(MOCK_SEC.reboot ? ['YES', 'linux-image-5.15.0-131-generic', 'linux-base'] : []),
+    '@@JOB', ...job,
+    '@@ROOT', 'SUDO',
+    '@@END',
+  ].join('\n') + '\n';
+}
+
+// A detached apt job: write its log line by line, like apt would, then PULT_EXIT.
+function mockJob(cmd) {
+  const id = cmd.match(/\$D\/([\w.-]+)\.log/)?.[1] || `job-${Date.now()}`;
+  const remote = `${HOME}/.pult/jobs/${id}.log`;
+  const file = local(remote);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, '');
+  fs.writeFileSync(local(`${HOME}/.pult/jobs/current`), `${remote}\n`);
+  MOCK_JOB = remote;
+  const kind = id.replace(/-[a-z0-9]+$/, '');
+  const pkgs = (cmd.match(/--only-upgrade ([a-z0-9+.:\s-]+?);/) || [])[1]?.trim().split(/\s+/) || [];
+  const names = kind === 'apt-upgrade' ? MOCK_UPGRADABLE.map((l) => l.split('/')[0]) : kind === 'apt-install' ? pkgs : kind === 'fail2ban' ? ['fail2ban'] : kind === 'auto-updates' ? ['unattended-upgrades'] : [];
+  const lines = [];
+  if (kind === 'apt-update') {
+    lines.push('Hit:1 http://archive.ubuntu.com/ubuntu jammy InRelease', 'Get:2 http://archive.ubuntu.com/ubuntu jammy-updates InRelease [128 kB]', 'Get:3 http://security.ubuntu.com/ubuntu jammy-security InRelease [129 kB]', 'Fetched 2,413 kB in 2s (1,206 kB/s)', 'Reading package lists...');
+  } else {
+    lines.push('Reading package lists...', 'Building dependency tree...', 'Reading state information...', 'Calculating upgrade...');
+    lines.push(kind === 'apt-upgrade' || kind === 'apt-install' ? 'The following packages will be upgraded:' : 'The following NEW packages will be installed:', `  ${names.join(' ')}`);
+    lines.push(`${names.length} upgraded, 0 newly installed, 0 to remove and 0 not upgraded.`);
+    names.forEach((n, i) => lines.push(`Get:${i + 1} http://archive.ubuntu.com/ubuntu jammy-updates/main amd64 ${n} [${120 + i * 37} kB]`));
+    names.forEach((n) => lines.push(`Preparing to unpack .../${n}.deb ...`, `Unpacking ${n} ...`));
+    names.forEach((n) => lines.push(`Setting up ${n} ...`));
+    lines.push('Processing triggers for man-db (2.10.2-1) ...', 'Processing triggers for libc-bin (2.35-0ubuntu3.8) ...');
+    if (kind === 'fail2ban') lines.push('Status', '|- Number of jail:\t1', '`- Jail list:\tsshd');
+    if (kind === 'auto-updates') lines.push('Avtomatik xavfsizlik yangilanishlari yoqildi.');
+  }
+  lines.push('PULT_EXIT=0');
+  let i = 0;
+  const timer = setInterval(() => {
+    fs.appendFileSync(file, `${lines[i++]}\n`);
+    if (i >= lines.length) {
+      clearInterval(timer);
+      if (kind === 'apt-upgrade') MOCK_UPGRADABLE = [];
+      if (kind === 'apt-install') MOCK_UPGRADABLE = MOCK_UPGRADABLE.filter((l) => !pkgs.includes(l.split('/')[0]));
+      if (kind === 'fail2ban') MOCK_SEC.f2b = true;
+      if (kind === 'auto-updates') MOCK_SEC.auto = true;
+    }
+  }, 160);
+  return `LOG ${remote}\n`;
+}
+
 /* ---------------- server administration (services, Docker, disk, logs) ---------------- */
 
 const MOCK_SERVICES = {
@@ -606,6 +717,36 @@ function mockDu(dir) {
 
 // Live log: some history, then a new line every ~1.2 s until the client closes.
 function mockLogStream(stream, cmd) {
+  // A job log (tail -n +1 -F): follow the real file under MOCK_ROOT.
+  const job = cmd.match(/tail -n \+1 -F -- '([^']+)'/)?.[1];
+  if (job) {
+    let pos = 0;
+    const tick = () => {
+      try {
+        const text = fs.readFileSync(local(job), 'utf8');
+        if (text.length > pos) {
+          stream.write(text.slice(pos));
+          pos = text.length;
+        }
+      } catch {
+        // not there yet
+      }
+    };
+    tick();
+    const timer = setInterval(tick, 200);
+    const stop = () => {
+      clearInterval(timer);
+      try {
+        stream.exit(0);
+        stream.end();
+      } catch {
+        // closed
+      }
+    };
+    stream.on('end', stop);
+    stream.on('close', stop);
+    return;
+  }
   const iso = (t) => new Date(t).toISOString().replace(/\.\d+Z$/, '+0500');
   const unit = cmd.match(/journalctl -u '([^']+)'/)?.[1];
   const docker = cmd.match(/docker logs -f --tail \d+ --timestamps '([^']+)'/)?.[1];
@@ -701,6 +842,32 @@ new Server({ hostKeys: [hostKey] }, (client, info) => {
         }
         // Server administration (src/main/system.js): services, Docker, disk, logs.
         if (cmd.includes('cat >/dev/null; kill $P')) return mockLogStream(stream, cmd);
+        // Security check, SSH hardening, apt updates (detached jobs), reboot.
+        const reply = (text, code = 0) => {
+          stream.write(text);
+          stream.exit(code);
+          stream.end();
+        };
+        if (cmd.includes('@@SSHDINC')) return reply(mockSecurity());
+        if (cmd.includes('01-pult.conf') && cmd.includes('APPLIED')) {
+          if (/rm -f \/etc\/ssh\/sshd_config\.d\/01-pult\.conf &&/.test(cmd)) Object.assign(MOCK_SEC, { password: 'yes', root: 'yes', dropin: false });
+          else {
+            if (cmd.includes("'PasswordAuthentication no'")) Object.assign(MOCK_SEC, { password: 'no', dropin: true });
+            if (cmd.includes("'PermitRootLogin prohibit-password'")) Object.assign(MOCK_SEC, { root: 'prohibit-password', dropin: true });
+          }
+          return reply('APPLIED\n');
+        }
+        if (cmd.includes('@@STAMP')) return reply(mockUpdates());
+        if (cmd.includes('.pult/jobs') && cmd.includes('nohup')) return reply(mockJob(cmd));
+        if (cmd.includes('systemctl reboot')) {
+          MOCK_SEC.reboot = false;
+          reply('OK\n');
+          setTimeout(() => {
+            refuseUntil = Date.now() + 6000;
+            client._sock?.destroy();
+          }, 1200);
+          return;
+        }
         if (cmd.includes('list-units --type=service')) {
           stream.write(mockServiceList());
           stream.exit(0);

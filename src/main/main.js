@@ -588,6 +588,11 @@ handle('sys:container', (connId, id, action) => system.containerAction(conn(conn
 handle('sys:mounts', (connId) => system.mounts(conn(connId)));
 handle('sys:usage', (connId, dir) => system.usage(conn(connId), dir));
 handle('sys:bigFiles', (connId, dir) => system.bigFiles(conn(connId), dir));
+handle('sys:security', (connId) => system.security(conn(connId)));
+handle('sys:securityFix', (connId, fix) => system.securityFix(conn(connId), fix));
+handle('sys:updates', (connId) => system.updates(conn(connId)));
+handle('sys:job', (connId, kind, pkgs) => system.jobStart(conn(connId), kind, pkgs));
+handle('sys:reboot', (connId) => system.reboot(conn(connId)));
 
 // Live logs: one exec channel each; text goes to the window as it arrives.
 const logStreams = new Map(); // id → { close }
